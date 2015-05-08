@@ -56,8 +56,10 @@ process.PoolDBOutputService = cms.Service("PoolDBOutputService",
 
 process.prod = cms.EDAnalyzer("SiStripApvGainFromFileBuilder",
     heightThreshold = cms.untracked.double(50.),
-    tickFile        = cms.untracked.FileInPath("CondTools/SiStrip/data/nt0.root"),
-    referenceFile   = cms.untracked.FileInPath("CondTools/SiStrip/data/nt0_reference.root"),
+    doRecovery      = cms.untracked.bool(False),
+    tickFile        = cms.untracked.FileInPath("CondTools/SiStrip/data/timing_05May.root"),
+    referenceFile   = cms.untracked.FileInPath("CondTools/SiStrip/data/timing_11April.root"),
+    recoveryList    = cms.untracked.FileInPath("CondTools/SiStrip/data/bad.txt"),
     outputMaps      = cms.untracked.bool(True),
     outputSummary   = cms.untracked.bool(True),
 )
