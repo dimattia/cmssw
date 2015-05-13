@@ -11,6 +11,7 @@
 <use   name="CondCore/DBOutputService"/>
 <use   name="CondCore/DBCommon"/>
 <use   name="CondFormats/SiStripObjects"/>
+<use   name="CondFormats/RunInfo"/>
 <use   name="CalibFormats/SiStripObjects"/>
 <use   name="DataFormats/SiStripDetId"/>
 <use   name="CalibTracker/SiStripCommon"/>
