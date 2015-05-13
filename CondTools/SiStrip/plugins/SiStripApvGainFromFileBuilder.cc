@@ -47,6 +47,8 @@ SiStripApvGainFromFileBuilder::~SiStripApvGainFromFileBuilder() {
     for_each(gains_.begin(), gains_.end(), CleanUp);
     for_each(negative_gains_.begin(), negative_gains_.end(), CleanUp);
     for_each(null_gains_.begin(), null_gains_.end(), CleanUp);
+
+    if (siStripQuality_!=0) delete siStripQuality_;
 }
 
 SiStripApvGainFromFileBuilder::SiStripApvGainFromFileBuilder( const edm::ParameterSet& iConfig ):
@@ -65,7 +67,11 @@ SiStripApvGainFromFileBuilder::SiStripApvGainFromFileBuilder( const edm::Paramet
   putDummyIntoBadChannels_(iConfig.getUntrackedParameter<bool>("putDummyIntoBadChannels",1.)),
   putDummyIntoLowChannels_(iConfig.getUntrackedParameter<bool>("putDummyIntoLowChannels",1.)),
   outputMaps_(iConfig.getUntrackedParameter<bool>("outputMaps",0)),
-  outputSummary_(iConfig.getUntrackedParameter<bool>("outputSummary",0)){}
+  outputSummary_(iConfig.getUntrackedParameter<bool>("outputSummary",0))
+{
+  siStripQuality_ = 0;
+  siStripQuality_ = new SiStripQuality();
+}
 
 
 void
@@ -123,6 +129,15 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
 
   // Retrieve the SiStripDetCabling description
   iSetup.get<SiStripDetCablingRcd>().get( detCabling_ );
+
+  //Retrieve the RunInfo object
+  edm::ESHandle<RunInfo> runInfo;
+  iSetup.get<RunInfoRcd>().get( runInfo );
+
+  siStripQuality_->add( detCabling_.product() );
+  siStripQuality_->add( runInfo.product() );
+  siStripQuality_->cleanUp();
+  siStripQuality_->fillBadComponents();
 
   // APV gain record to be filled with gains and delivered into the database.
   SiStripApvGain* obj = new SiStripApvGain();
@@ -208,6 +223,8 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
       summary.FEC_ring  = -1;
       summary.CCU_addr  = -1;
       summary.CCU_chan  = -1;
+
+      summary.channel_status = ( siStripQuality_->IsApvBad(summary.det_id,summary.offlineAPV_id) )? 'd' : 'e';
 
       for (unsigned int ca = 0; ca<connection.size(); ca++) { 
         if( connection[ca]!=0 && (connection[ca])->i2cAddr( j%2 )%32==summary.onlineAPV_id ) {
@@ -381,7 +398,7 @@ SiStripApvGainFromFileBuilder::read_summary(std::vector<Summary>& list) {
                  >> s.FEC_crate       >> s.FEC_slot        >> s.FEC_ring         >> s.CCU_addr           >> s.CCU_chan
                  >> s.i2cAdd          >> s.onlineAPV_id    >> scanning           >> s.tickmark_height    >> s.aoh_gain
                  >> s.aoh_bias        >> s.gain_in_db      >> s.reference_height >> s.reference_aoh_gain >> s.reference_aoh_bias
-                 >> s.tickmark_status >> s.recovery_status >> s.status_wrt_previous_run;
+                 >> s.tickmark_status >> s.channel_status  >> s.recovery_status  >> s.status_wrt_previous_run;
 
     s.is_connected = (connection.compare("CONN")==0)? true : false;
     s.is_scanned   = (scanning.compare("SCAN")==0)?   true : false;
@@ -845,6 +862,7 @@ void SiStripApvGainFromFileBuilder::format_summary(std::stringstream& line, Summ
          << std::setprecision(0) << std::setw(3) << summary.reference_aoh_gain << "  "
          << std::setw(3) << summary.reference_aoh_bias << " "
          << summary.tickmark_status  << " "
+         << summary.channel_status << " "
          << summary.recovery_status << " "
          << summary.status_wrt_previous_run;
 }

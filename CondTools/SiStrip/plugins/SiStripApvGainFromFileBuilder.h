@@ -9,6 +9,7 @@
 #include "FWCore/ParameterSet/interface/FileInPath.h"
 
 #include "CondFormats/SiStripObjects/interface/SiStripApvGain.h"
+#include "CalibFormats/SiStripObjects/interface/SiStripQuality.h"
 
 #include "CLHEP/Random/RandFlat.h"
 #include "CLHEP/Random/RandGauss.h"
@@ -19,6 +20,7 @@
 
 
 class SiStripDetCabling;
+class RunInfo;
 class TH1F;
 
 class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
@@ -60,6 +62,7 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
                    float     reference_aoh_gain;
                    float     reference_aoh_bias;
                    char      tickmark_status;           /*!< "G" good status; "B" bad status; "V" to be checked */
+                   char      channel_status;            /*!< "e" enabled in FED; "d" disabled in FED */
                    char      recovery_status;           /*!< "R" recoverable; "U" unrecoverable (bad status in reference too) */
                    char      status_wrt_previous_run;   /*!< "+" better condition; "-" worse condition; "=" same condition */
                  } Summary;
@@ -99,7 +102,7 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   double goodHeightLimit_;       /*!< Lower threshold to consider the height values good for being used for recovery. */
   double badHeightLimit_;        /*!< Upper threshold to consider the height values bad and try the recovery procedure. */
   double dummyAPVGain_;          /*!< Dummy value for the APV gain. */
-  bool doRecovery_;              /*!< Flaf to apply the recovery procedure. */
+  bool doRecovery_;              /*!< Flag to apply the recovery procedure. */
   bool putDummyIntoUncabled_;    /*!< Flag for putting the dummy gain in the channels not actuall cabled. */
   bool putDummyIntoUnscanned_;   /*!< Flag for putting the dummy gain in the chennals not scanned. */
   bool putDummyIntoOffChannels_; /*!< Flag for putting the dummy gain in the channels that were off during the tickmark scan. */
@@ -133,7 +136,8 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   TH1F* h_height_ratio_at_DGm3;  /*!< tickmark height / reference height for the channels with Delta AOH Gain == -3. */
 
 
-  edm::ESHandle<SiStripDetCabling> detCabling_; /*!< Description of detector cabling. */
+  edm::ESHandle<SiStripDetCabling> detCabling_;     /*!< Description of detector cabling. */
+  SiStripQuality*                  siStripQuality_; /*!< Description of detector configuration (for the disabled channels). */
 
   /** Brief Maps [det_id <--> tickmark height infos] arranged per APV indexes.
    */
