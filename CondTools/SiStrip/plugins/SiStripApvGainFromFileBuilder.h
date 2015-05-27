@@ -11,17 +11,24 @@
 #include "CondFormats/SiStripObjects/interface/SiStripApvGain.h"
 #include "CalibFormats/SiStripObjects/interface/SiStripQuality.h"
 
+#include "DataFormats/SiStripDetId/interface/TIBDetId.h"
+#include "DataFormats/SiStripDetId/interface/TOBDetId.h"
+#include "DataFormats/SiStripDetId/interface/TIDDetId.h"
+#include "DataFormats/SiStripDetId/interface/TECDetId.h"
+
 #include "CLHEP/Random/RandFlat.h"
 #include "CLHEP/Random/RandGauss.h"
 
 #include <map>
 #include <vector>
+#include <sstream>
 #include <stdint.h>
 
 
 class SiStripDetCabling;
 class RunInfo;
 class TH1F;
+class TH2F;
 
 class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
 
@@ -40,9 +47,23 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
 
   typedef std::map< uint32_t, tickmark_info > Gain;
 
+  struct noise_info {
+                   double noise;
+                   double pedestal;
+
+                   noise_info(): noise(999999.), pedestal(999999.) { }
+
+                   noise_info(double n, double p) : noise(n), pedestal(p) { }
+                 };
+
+  typedef std::map< uint32_t, noise_info > Noise;
+
+
+
   typedef struct {
                    uint32_t  det_id;
                    uint16_t  offlineAPV_id;
+                   uint16_t  det_type;
                    int       onlineAPV_id;
                    int       FED_id;
                    int       FED_ch;
@@ -54,6 +75,9 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
                    int       CCU_chan;
                    bool      is_connected;
                    bool      is_scanned;
+                   float     noise;
+                   float     pedestal;
+                   float     strip_length;
                    float     tickmark_height;
                    float     aoh_gain;
                    float     aoh_bias;
@@ -65,6 +89,39 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
                    char      channel_status;            /*!< "e" enabled in FED; "d" disabled in FED */
                    char      recovery_status;           /*!< "R" recoverable; "U" unrecoverable (bad status in reference too) */
                    char      status_wrt_previous_run;   /*!< "+" better condition; "-" worse condition; "=" same condition */
+                   std::string detType() {
+                     std::string types[15] = {"UNKNOWN",
+                                              "IB1","IB2","OB1","OB2","W1A","W2A","W3A","W1B","W2B","W3B","W4","W5","W6","W7"};
+                     if ( det_type>14 ) return types[0];
+                     return types[det_type];
+                   }
+                   uint16_t detType(const char* type) {
+                     std::string types[15] = {"UNKNOWN",
+                                              "IB1","IB2","OB1","OB2","W1A","W2A","W3A","W1B","W2B","W3B","W4","W5","W6","W7"};
+                     for(int i=14;i>=0;i--) {
+                       if( types[i].compare( type )==0 ) return i;  
+                     }
+                     return 0;
+                   }
+                   std::string detTopo() {
+                     int subDetId = ((det_id>>25)&0x7);
+                     std::stringstream out;
+                     switch(subDetId){
+                       case 3: //TIB
+                         out << "TIB_L" << TIBDetId(det_id).layer();
+                         return out.str();
+                       case 4: //TID
+                         out << "TID_W" << (-1*(2*(int)TIDDetId(det_id).side()-3)*(int)TIDDetId(det_id).wheel());
+                         return out.str();
+                       case 5: //TOB
+                         out << "TOB_L" << TOBDetId(det_id).layer();
+                         return out.str();
+                       case 6: //TEC
+                         out << "TEC_W" << (-1*(2*(int)TECDetId(det_id).side()-3)*(int)TECDetId(det_id).wheel());
+                         return out.str();
+                     }
+                     return "";
+                   }
                  } Summary;
 
   /** Brief Constructor.
@@ -97,6 +154,7 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   edm::FileInPath gfp_;          /*!< File Path for the ideal geometry. */
   edm::FileInPath tfp_;          /*!< Path for the file containing the APV heights from the tickmark scan. */
   edm::FileInPath rfp_;          /*!< Path for the file containing the APV heights from the reference tickmark scan. */
+  edm::FileInPath nfp_;          /*!< Path for the file containing the mean noise per APV. */
   edm::FileInPath recoveryList_; /*!< Path for the file containing the list of channels to be recovered. */
   double heightThreshold_;       /*!< Lower threshold for accepting the APV tickmark height in the scan. */
   double goodHeightLimit_;       /*!< Lower threshold to consider the height values good for being used for recovery. */
@@ -135,6 +193,13 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   TH1F* h_height_ratio_at_DGm2;  /*!< tickmark height / reference height for the channels with Delta AOH Gain == -2. */
   TH1F* h_height_ratio_at_DGm3;  /*!< tickmark height / reference height for the channels with Delta AOH Gain == -3. */
 
+  TH2F* h_noise_vs_gain[15];     /*!< noise versus gain plot for detector type. */
+  TH2F* h_bad_channels[15];      /*!< noise versus gain for the channels recognized as bad. */
+  TH2F* h_noisy_channels[15];    /*!< noise versus gain for the noisy channels (the ones with noise too low). */
+  TH2F* h_surveyed_channels[15]; /*!< noise versus gain for the channels to be surveyed. */
+  TH2F* h_badAOHgs_channels[15]; /*!< noise versus gain for the channels which have wrong AOH gain setting.*/
+  TH2F* h_good_channels[15];     /*!< noise versus gain for the good channels. */
+
 
   edm::ESHandle<SiStripDetCabling> detCabling_;     /*!< Description of detector cabling. */
   SiStripQuality*                  siStripQuality_; /*!< Description of detector configuration (for the disabled channels). */
@@ -146,6 +211,8 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   std::vector<Gain*> null_gains_;     /*!< Mapping channels switched off during the scan. */
 
   std::vector<Gain*> ref_gains_;      /*!< Mapping channels with reference height for comparison. */
+
+  std::vector<Noise*> noise_;         /*!< Mapping noise on channels; */
 
 
   /** Brief Collection of the channels entered in the DB without exceptions.
@@ -202,13 +269,29 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
                                                      std::vector<Gain*>* negative_gains,
                                                      std::vector<Gain*>* null_gains);
 
+   /** Brief Read the root file containing the mean noise per APV.
+    * This method reads the root file, generated by the WBM template, that
+    * containis the tree with the noise and pedestal value for the APVs.
+    */
+  bool read_noise_from_root(const char* filename, std::vector<Noise*>* noise);
+
+
   /** Brief Returns the mapping among det_id and tickmark heights for the APVs.
    * This method retrieves the mapping of detector Ids <-> tickmark heights for
    * a specific APV online Id. The map corresponding to the APV Id is returned 
    * if it exists; on the contrary a new empty map is created, inserted and 
    * returned. The methods accepts onlineIDs running from 0 to 5. 
    */
-  Gain* get_map(std::vector<Gain*>* maps, int onlineAPV_id);
+  Gain* get_gain_map(std::vector<Gain*>* maps, int onlineAPV_id);
+
+  /** Brief Returns the mapping among det_id and noise values for the APVs.
+   * This method retrieves the mapping of detector Ids <-> noise value for a
+   * specific APV online Id. The map corresponding to the APV Id is returned 
+   * if it exists; on the contrary a new empty map is created, inserted and 
+   * returned. The methods accepts onlineIDs running from 0 to 5. 
+   */
+  Noise* get_noise_map(std::vector<Noise*>* maps, int onlineAPV_id);
+
 
   /** Brief Dumps the tickmark heights in ASCII format to input the tracker map.
    * This method dumps the detector id <-> tickmark height into acii files for
@@ -248,9 +331,13 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   void height_from_maps(uint32_t det_id, uint16_t totalAPVs, std::vector< std::pair<int,tickmark_info> >& tick_info) const;
   void height_from_reference(uint32_t det_id, uint16_t totalAPVs, std::vector< std::pair<int,tickmark_info> >& tick_info) const;
 
+  /** Brief Find the noise for a pair det_id, APV_id in the internal maps.
+   */
+  void noise_from_maps(uint32_t det_id, uint16_t totalAPVs, std::vector< std::pair<int,noise_info> >& noise_info) const;
+
   /** Brief Check if tickmarck is recoverable.
    */
-  bool is_recoverable(Summary& summary) const;  
+  void set_tickmark_status(Summary& summary) const;  
 
   /** Brief Apply the recovery using the recovery list.
    * The method checks the input summary agains the recovery list. If a 
@@ -266,6 +353,17 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   /** Brief Check if tickmark height is usable.
    */
   inline bool is_usable(double height, double deltaAOHGain=0.) const; 
+
+  /** Brief Set the gain and status in summary.
+   */
+  inline void set_gain(Summary& summary, double height, const char status) const;
+
+  /** Brief Check if AOH gain setting is correct.
+   */
+  inline bool is_aoh_gain_ok(float tickmark_height, int aoh_gain) const;
+
+
+
 };
 
 inline bool
@@ -273,5 +371,24 @@ SiStripApvGainFromFileBuilder::is_usable(double height, double deltaAOHGain) con
   return ( height!=999999. && height>heightThreshold_ && deltaAOHGain==0 );
 }
 
+inline void
+SiStripApvGainFromFileBuilder::set_gain(Summary& summary, double height, const char status) const {
+  summary.gain_in_db = height / 640.;
+  summary.recovery_status = status;
+}
+
+inline bool SiStripApvGainFromFileBuilder::is_aoh_gain_ok(float tickmark_height, int aoh_gain) const {
+  float g_ratio[4] = {1., 1.5, 2.0, 2.5};
+  float target = 690.;
+  if ( tickmark_height>target && aoh_gain>0 ) {
+    float rescaled_height = (g_ratio[aoh_gain-1]/g_ratio[aoh_gain])*tickmark_height;
+    if ( std::fabs(rescaled_height-target)<std::fabs(tickmark_height-target) ) return false;
+  }
+  if ( tickmark_height<target && aoh_gain<3 ) {
+    float rescaled_height = (g_ratio[aoh_gain+1]/g_ratio[aoh_gain])*tickmark_height;
+    if ( std::fabs(rescaled_height-target)<std::fabs(tickmark_height-target) ) return false;
+  }
+  return true;
+}
 
 #endif
