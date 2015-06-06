@@ -75,6 +75,7 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
                    int       CCU_chan;
                    bool      is_connected;
                    bool      is_scanned;
+                   bool      has_big_height_drop;
                    float     noise;
                    float     pedestal;
                    float     strip_length;
@@ -155,11 +156,11 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   edm::FileInPath tfp_;          /*!< Path for the file containing the APV heights from the tickmark scan. */
   edm::FileInPath rfp_;          /*!< Path for the file containing the APV heights from the reference tickmark scan. */
   edm::FileInPath nfp_;          /*!< Path for the file containing the mean noise per APV. */
-  edm::FileInPath recoveryList_; /*!< Path for the file containing the list of channels to be recovered. */
+  std::string recoveryList_;     /*!< Path for the file containing the list of channels to be recovered. */
   double heightThreshold_;       /*!< Lower threshold for accepting the APV tickmark height in the scan. */
   double goodHeightLimit_;       /*!< Lower threshold to consider the height values good for being used for recovery. */
   double badHeightLimit_;        /*!< Upper threshold to consider the height values bad and try the recovery procedure. */
-  double dummyAPVGain_;          /*!< Dummy value for the APV gain. */
+  double dummyAPVHeight_;        /*!< Dummy value for the APV height. */
   bool doRecovery_;              /*!< Flag to apply the recovery procedure. */
   bool putDummyIntoUncabled_;    /*!< Flag for putting the dummy gain in the channels not actuall cabled. */
   bool putDummyIntoUnscanned_;   /*!< Flag for putting the dummy gain in the chennals not scanned. */
@@ -168,6 +169,7 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   bool putDummyIntoLowChannels_; /*!< Flag for putting the dummy gain in the channels with tickmark heights under threshold. */
   bool outputMaps_;              /*!< Flag for dumping the internal maps on ASCII files. */
   bool outputSummary_;           /*!< Flag for dumping the summary of the exceptions during the DB filling. */
+
 
   TH1F* h_tickmark_height_0;     /*!< Histogram storing the tickmark heights with AOH gain == 0. */
   TH1F* h_tickmark_height_1;     /*!< Histogram storing the tickmark heights with AOH gain == 1. */
@@ -184,6 +186,15 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   TH1F* h_tickmark_replaced_2;   /*!< Histogram storing the tickmark heights replaced with AOH gain == 2. */
   TH1F* h_tickmark_replaced_3;   /*!< Histogram storing the tickmark heights replaced with AOH gain == 3. */
 
+
+  TH1F* h_tickmark_ratio;       /*!< tickmark height / reference height after rescaling for the different AOH gain. */
+  TH1F* h_tickmark_ratio_tDGp0; /*!< tickmark height / reference height test for Delta AOH Gain == 0. */
+  TH1F* h_tickmark_ratio_tDGp1; /*!< tickmark height / reference height test for Delta AOH Gain == +1. */
+  TH1F* h_tickmark_ratio_tDGp2; /*!< tickmark height / reference height test for Delta AOH Gain == +2. */
+  TH1F* h_tickmark_ratio_tDGp3; /*!< tickmark height / reference height test for Delta AOH Gain == +3. */
+  TH1F* h_tickmark_ratio_tDGm1; /*!< tickmark height / reference height test for Delta AOH Gain == -1. */
+  TH1F* h_tickmark_ratio_tDGm2; /*!< tickmark height / reference height test for Delta AOH Gain == -2. */
+  TH1F* h_tickmark_ratio_tDGm3; /*!< tickmark height / reference height test for Delta AOH Gain == -3. */
 
   TH1F* h_height_ratio_at_DG0;   /*!< tickmark height / reference height for the channels with Delta AOH Gain ==  0. */
   TH1F* h_height_ratio_at_DGp1;  /*!< tickmark height / reference height for the channels with Delta AOH Gain == +1. */
@@ -356,14 +367,15 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
 
   /** Brief Set the gain and status in summary.
    */
-  inline void set_gain(Summary& summary, double height, const char status) const;
+  inline void set_gain(Summary& summary, float height, const char status) const;
+
+  /** Brief Rescale the tickmark height for the different AOH settings.
+   */
+  inline bool rescale_tickmark(float tickmark_heght, int aoh_gain, int new_aoh_gain, float& rescaled_tickmark) const;
 
   /** Brief Check if AOH gain setting is correct.
    */
   inline bool is_aoh_gain_ok(float tickmark_height, int aoh_gain) const;
-
-
-
 };
 
 inline bool
@@ -372,7 +384,7 @@ SiStripApvGainFromFileBuilder::is_usable(double height, double deltaAOHGain) con
 }
 
 inline void
-SiStripApvGainFromFileBuilder::set_gain(Summary& summary, double height, const char status) const {
+SiStripApvGainFromFileBuilder::set_gain(Summary& summary, float height, const char status) const {
   summary.gain_in_db = height / 640.;
   summary.recovery_status = status;
 }
@@ -388,6 +400,21 @@ inline bool SiStripApvGainFromFileBuilder::is_aoh_gain_ok(float tickmark_height,
     float rescaled_height = (g_ratio[aoh_gain+1]/g_ratio[aoh_gain])*tickmark_height;
     if ( std::fabs(rescaled_height-target)<std::fabs(tickmark_height-target) ) return false;
   }
+  return true;
+}
+
+inline bool 
+SiStripApvGainFromFileBuilder::rescale_tickmark(float tickmark_height, int aoh_gain, int new_aoh_gain,
+                                                float& rescaled_tickmark) const {
+  float g_ratio[4] = {1., 1.5, 2.0, 2.5};
+  rescaled_tickmark = tickmark_height;
+
+  if ( aoh_gain>3||aoh_gain<0 ) return false;
+  if ( new_aoh_gain>3||new_aoh_gain<0 ) return false;
+  if ( new_aoh_gain==aoh_gain ) return true;
+
+  rescaled_tickmark = (g_ratio[new_aoh_gain]/g_ratio[aoh_gain])*tickmark_height;
+
   return true;
 }
 
