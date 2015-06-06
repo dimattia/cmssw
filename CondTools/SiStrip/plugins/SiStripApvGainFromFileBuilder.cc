@@ -3,6 +3,7 @@
 #include "CalibTracker/Records/interface/SiStripDetCablingRcd.h"
 #include "CalibFormats/SiStripObjects/interface/SiStripDetCabling.h"
 #include "DataFormats/SiStripDetId/interface/SiStripDetId.h"
+#include "CondFormats/SiStripObjects/interface/SiStripBadStrip.h"
 
 #include "FWCore/Framework/interface/EventSetup.h"
 
@@ -45,6 +46,10 @@ bool ends_with(std::string const & value, std::string const & ending) {
     return std::equal( ending.rbegin(), ending.rend(), value.rbegin() );
 }
 
+bool sort_summary_by_offline_id (SiStripApvGainFromFileBuilder::Summary i, SiStripApvGainFromFileBuilder::Summary j) {
+    return (i.det_id<j.det_id) || ( (i.det_id==j.det_id) && (i.offlineAPV_id<j.offlineAPV_id) );
+}
+
 
 SiStripApvGainFromFileBuilder::~SiStripApvGainFromFileBuilder() {
     for_each(gains_.begin(), gains_.end(), CleanUp);
@@ -59,11 +64,11 @@ SiStripApvGainFromFileBuilder::SiStripApvGainFromFileBuilder( const edm::Paramet
   tfp_(iConfig.getUntrackedParameter<edm::FileInPath>("tickFile",edm::FileInPath("CondTools/SiStrip/data/tickheight.txt"))),
   rfp_(iConfig.getUntrackedParameter<edm::FileInPath>("referenceFile",edm::FileInPath("CondTools/SiStrip/data/tickheight.txt"))),
   nfp_(iConfig.getUntrackedParameter<edm::FileInPath>("noiseFile",edm::FileInPath("CondTools/SiStrip/data/noise_May.root"))),
-  recoveryList_(iConfig.getUntrackedParameter<edm::FileInPath>("recoveryList",edm::FileInPath("CondTools/SiStrip/data/bad.txt"))),
+  recoveryList_(iConfig.getUntrackedParameter<std::string>("recoveryList","")),
   heightThreshold_(iConfig.getUntrackedParameter<double>("heightThreshold",0.)), 
   goodHeightLimit_(iConfig.getUntrackedParameter<double>("goodHeightLimit",440.)),
   badHeightLimit_(iConfig.getUntrackedParameter<double>("badHeightLimit",400.)),
-  dummyAPVGain_(iConfig.getUntrackedParameter<double>("dummyAPVGain",690./640.)),
+  dummyAPVHeight_(iConfig.getUntrackedParameter<double>("dummyAPVHeight",690.)),
   doRecovery_(iConfig.getUntrackedParameter<bool>("doRecovery",1)),
   putDummyIntoUncabled_(iConfig.getUntrackedParameter<bool>("putDummyIntoUncabled",1)),
   putDummyIntoUnscanned_(iConfig.getUntrackedParameter<bool>("putDummyIntoUnscanned",1)),
@@ -99,13 +104,22 @@ SiStripApvGainFromFileBuilder::beginJob() {
   h_tickmark_recovered_2 = fs->make<TH1F>("tickmark_recovered_2", "Tickmark height with AOH gain at 2", 110,0.,1100.);
   h_tickmark_recovered_3 = fs->make<TH1F>("tickmark_recovered_3", "Tickmark height with AOH gain at 3", 110,0.,1100.);
 
-  h_height_ratio_at_DG0  = fs->make<TH1F>("height_ratio_at_DG0",  "Tickmark height ratio with #Delta AOHGain==0",400,0.,+2.);
-  h_height_ratio_at_DGp1 = fs->make<TH1F>("height_ratio_at_DGp1", "Tickmark height ratio with #Delta AOHGain==1",400,0.,+2.);
-  h_height_ratio_at_DGp2 = fs->make<TH1F>("height_ratio_at_DGp2", "Tickmark height ratio with #Delta AOHGain==2",400,0.,+2.);
-  h_height_ratio_at_DGp3 = fs->make<TH1F>("height_ratio_at_DGp3", "Tickmark height ratio with #Delta AOHGain==3",400,0.,+2.);
-  h_height_ratio_at_DGm1 = fs->make<TH1F>("height_ratio_at_DGm1", "Tickmark height ratio with #Delta AOHGain==1",400,0.,+2.); 
-  h_height_ratio_at_DGm2 = fs->make<TH1F>("height_ratio_at_DGm2", "Tickmark height ratio with #Delta AOHGain==2",400,0.,+2.);
-  h_height_ratio_at_DGm3 = fs->make<TH1F>("height_ratio_at_DGm3", "Tickmark height ratio with #Delta AOHGain==3",400,0.,+2.);
+  h_tickmark_ratio       = fs->make<TH1F>("tickmark_ratio",      "Tickmark height ratio",400,0.,+2.);
+  h_tickmark_ratio_tDGp0 = fs->make<TH1F>("tickmark_ratio_tDGp0","Tickmark height ratio test for #Delta AOHGain=0",400,0.,+2.);
+  h_tickmark_ratio_tDGp1 = fs->make<TH1F>("tickmark_ratio_tDGp1","Tickmark height ratio test for #Delta AOHGain=1",400,0.,+2.);
+  h_tickmark_ratio_tDGp2 = fs->make<TH1F>("tickmark_ratio_tDGp2","Tickmark height ratio test for #Delta AOHGain=2",400,0.,+2.);
+  h_tickmark_ratio_tDGp3 = fs->make<TH1F>("tickmark_ratio_tDGp3","Tickmark height ratio test for #Delta AOHGain=3",400,0.,+2.);
+  h_tickmark_ratio_tDGm1 = fs->make<TH1F>("tickmark_ratio_tDGm1","Tickmark height ratio test for #Delta AOHGain=-1",400,0.,+2.);
+  h_tickmark_ratio_tDGm2 = fs->make<TH1F>("tickmark_ratio_tDGm2","Tickmark height ratio test for #Delta AOHGain=-2",400,0.,+2.);
+  h_tickmark_ratio_tDGm3 = fs->make<TH1F>("tickmark_ratio_tDGm3","Tickmark height ratio test for #Delta AOHGain=-3",400,0.,+2.);
+
+  h_height_ratio_at_DG0  = fs->make<TH1F>("height_ratio_at_DG0",  "Tickmark height ratio with #Delta AOHGain=0",400,0.,+2.);
+  h_height_ratio_at_DGp1 = fs->make<TH1F>("height_ratio_at_DGp1", "Tickmark height ratio with #Delta AOHGain=1",400,0.,+2.);
+  h_height_ratio_at_DGp2 = fs->make<TH1F>("height_ratio_at_DGp2", "Tickmark height ratio with #Delta AOHGain=2",400,0.,+2.);
+  h_height_ratio_at_DGp3 = fs->make<TH1F>("height_ratio_at_DGp3", "Tickmark height ratio with #Delta AOHGain=3",400,0.,+2.);
+  h_height_ratio_at_DGm1 = fs->make<TH1F>("height_ratio_at_DGm1", "Tickmark height ratio with #Delta AOHGain=-1",400,0.,+2.); 
+  h_height_ratio_at_DGm2 = fs->make<TH1F>("height_ratio_at_DGm2", "Tickmark height ratio with #Delta AOHGain=-2",400,0.,+2.);
+  h_height_ratio_at_DGm3 = fs->make<TH1F>("height_ratio_at_DGm3", "Tickmark height ratio with #Delta AOHGain=-3",400,0.,+2.);
 
   for (unsigned int i=0; i<15; i++) {
     Summary s;
@@ -135,6 +149,8 @@ void
 SiStripApvGainFromFileBuilder::endJob() {
   // Register to the TFileService
   edm::Service<TFileService> fs;
+
+  edm::LogInfo("Workflow") << "@SUB=endJob" <<  "Fitting gain versus noise." << std::endl;
 
   //fitting noise histograms
   for(unsigned int i=1; i<15;i++) {
@@ -203,6 +219,88 @@ SiStripApvGainFromFileBuilder::endJob() {
     }
   }
 
+  //sort summaries
+  std::sort( summary_.begin(), summary_.end(), sort_summary_by_offline_id);
+  std::sort( ex_summary_.begin(), ex_summary_.end(), sort_summary_by_offline_id);
+
+
+  edm::LogInfo("Workflow") << "@SUB=endJob" <<  "Filling bad strip ranges." << std::endl;
+  // fill bad components record
+  SiStripBadStrip* bad_components = new SiStripBadStrip();
+
+  std::map<uint32_t, std::vector<unsigned int>> theSiStripBadMap;  // hold vector of bad strip ranges per module
+  std::pair< std::map<uint32_t, std::vector<unsigned int>>::iterator, bool> theMapElement;
+
+  uint32_t current_module  = 0;
+  uint16_t bad_apv_start   = -1;
+  uint16_t previous_apv    = -1;
+  uint16_t bad_consecutive = 0;
+
+  std::vector<Summary>::const_iterator bad;
+  for( bad=ex_summary_.begin(); bad!=ex_summary_.end(); bad++) {
+    //skip unconnected module
+    if( !(*bad).is_connected && (bad+1)!=ex_summary_.end() ) continue;
+
+    uint32_t module_id = (*bad).det_id;
+
+    bool flush_range = ( ((*bad).offlineAPV_id - previous_apv)>1 || current_module!=module_id || (bad+1)==ex_summary_.end() )? true : false;
+
+    if ( flush_range ) {
+      if ( bad_consecutive ) {
+        unsigned int theBadStripRange = bad_components->encode(bad_apv_start*128, bad_consecutive*128);
+        LogTrace("Debug") << "ModuleId: " << current_module
+                          << ",  start strip: " << std:: setw(3) << bad_apv_start*128
+                          << ",  range: " << std::setw(3) << bad_consecutive*128
+                          << ",  encoded word: " << theBadStripRange << std::endl;
+
+        std::map<uint32_t, std::vector<unsigned int>>::iterator element = theSiStripBadMap.find( current_module );
+        if( element!=theSiStripBadMap.end() ) (*element).second.push_back( theBadStripRange );
+        else {
+          edm::LogError("MapError") << "@SUB=endJob" << "Could not find element for detid " << module_id << " in the SiStripBadMap" << std::endl;
+          exit( 1 );
+        }
+      }
+      bad_apv_start = (*bad).offlineAPV_id;
+      bad_consecutive = 0;
+    }
+
+    // update the status
+    if ( current_module!=module_id ) {
+      theMapElement = theSiStripBadMap.insert( std::pair<uint32_t,std::vector<unsigned int>>(module_id,std::vector<unsigned int>()) );
+      if( theMapElement.second==false ) {
+          edm::LogError("MapError") << "@SUB=endJob" << "Could not insert detid " << module_id << " in the SiStripBadMap" << std::endl;
+      }
+      current_module=module_id;
+    }
+    previous_apv = (*bad).offlineAPV_id;
+    bad_consecutive++;
+  }
+
+  // dump the BadStripMap into the BadComponents
+  edm::LogInfo("Workflow") << "@SUB=endJob" <<  "Putting the bad strip ranges into the bad components record." << std::endl;
+  for( std::map<uint32_t, std::vector<unsigned int>>::iterator element=theSiStripBadMap.begin();element!=theSiStripBadMap.end();element++) {
+    if( (*element).second.size()!=0 ) {
+      SiStripBadStrip::Range range( (*element).second.begin(),(*element).second.end());
+      if ( ! bad_components->put( (*element).first,range) )
+        edm::LogError("BadComponents") << "@SUB=endJob" << "detid " << (*element).first << " already exists in bad components" << std::endl;
+    }
+  }
+
+  edm::LogInfo("Workflow") << "@SUB=endJob" <<  "Writing bad components record into the DB." << std::endl;
+  //End now write bad components data in DB
+  edm::Service<cond::service::PoolDBOutputService> mydbservice;
+  if( mydbservice.isAvailable() ){
+    if( mydbservice->isNewTagRequest("SiStripBadStripRcd") ){
+      mydbservice->createNewIOV<SiStripBadStrip>(bad_components,mydbservice->beginOfTime(),mydbservice->endOfTime(),"SiStripBadStripRcd");
+    } else {
+      mydbservice->appendSinceTime<SiStripBadStrip>(bad_components,mydbservice->currentTime(),"SiStripBadStripRcd");
+    }
+  }else{
+    edm::LogError("DBServiceNotAvailable") << "@SUB=analyze" << "DB Service is unavailable" << std::endl;
+  }
+
+  edm::LogInfo("Workflow") << "@SUB=endJob" <<  "Output summaries, tracker maps and quit." << std::endl;
+  // Ouput the Summaries and the Tracker maps
   if( outputSummary_ ) output_summary();
 
   try {
@@ -222,7 +320,7 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
 
   edm::LogInfo("Workflow") << "@SUB=analyze" <<  "Insert SiStripApvGain Data." << std::endl;
   this->read_tickmark();
-  this->read_summary(recovery_);
+  if ( !this->read_summary(recovery_) ) exit(1);
   if ( !this->read_noise_from_root( nfp_.fullPath().c_str(), &noise_ ) ) exit(1);
 
   if (outputMaps_) {
@@ -329,6 +427,7 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
       summary.offlineAPV_id = j;
       summary.onlineAPV_id  = tickmark_for_detId.at(j).first;
       summary.is_connected = false;
+      summary.has_big_height_drop = false;
       summary.strip_length = reader.getNumberOfApvsAndStripLength(it->first).second;
       summary.noise    = noise_for_detId.at(j).second.noise;
       summary.pedestal = noise_for_detId.at(j).second.pedestal;  
@@ -400,15 +499,13 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
             float recovery_height = apply_recovery(summary);
             if( doRecovery_ && recovery_height!=0. ) set_gain(summary, recovery_height, 'R');
 
-            if ( !summary.is_connected ) ex_summary_.push_back( summary );
-            else summary_.push_back( summary );
-
             // Fill histogram to monitor the quality
             h_noise_vs_gain[summary.det_type]->Fill(height/640.,summary.noise);
 
             if ( reference_height!=999999. && reference_height>0. ) {
               float ratio = height / reference_height;
               int dAOHGain = summary.aoh_gain - tickmark_reference[j].second.aoh_gain;
+              
               if      (dAOHGain==0)  h_height_ratio_at_DG0->Fill(ratio,1.0);
               else if (dAOHGain==1)  h_height_ratio_at_DGp1->Fill(ratio,1.0);
               else if (dAOHGain==2)  h_height_ratio_at_DGp2->Fill(ratio,1.0);
@@ -417,20 +514,36 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
               else if (dAOHGain==-2) h_height_ratio_at_DGm2->Fill(ratio,1.0);
               else if (dAOHGain==-3) h_height_ratio_at_DGm3->Fill(ratio,1.0);
 
+              float rescaled_height = 0.;
+              if( rescale_tickmark(reference_height,tickmark_reference[j].second.aoh_gain,summary.aoh_gain,rescaled_height) ) {
+                float rescaled_ratio = height / rescaled_height;
+                if ( rescaled_ratio<=0.8 ) summary.has_big_height_drop = true;
+                h_tickmark_ratio->Fill(rescaled_ratio,1.0);
+                if      (dAOHGain==0)  h_tickmark_ratio_tDGp0->Fill(rescaled_ratio,1.0);
+                else if (dAOHGain==1)  h_tickmark_ratio_tDGp1->Fill(rescaled_ratio,1.0);
+                else if (dAOHGain==2)  h_tickmark_ratio_tDGp2->Fill(rescaled_ratio,1.0);
+                else if (dAOHGain==3)  h_tickmark_ratio_tDGp3->Fill(rescaled_ratio,1.0);
+                else if (dAOHGain==-1) h_tickmark_ratio_tDGm1->Fill(rescaled_ratio,1.0);
+                else if (dAOHGain==-2) h_tickmark_ratio_tDGm2->Fill(rescaled_ratio,1.0);
+                else if (dAOHGain==-3) h_tickmark_ratio_tDGm3->Fill(rescaled_ratio,1.0);
+              }
             }
+
+            if ( !summary.is_connected ) ex_summary_.push_back( summary );
+            else summary_.push_back( summary );
 
           } else {
             float recovery_height = apply_recovery(summary);
             if ( height==0. ) {
               // channels that were off during the timing scan are processed here
               if( doRecovery_ && recovery_height!=0. ) set_gain(summary,recovery_height,'R');
-              else if( putDummyIntoOffChannels_ )      set_gain(summary,dummyAPVGain_,'D');
+              else if( putDummyIntoOffChannels_ )      set_gain(summary,dummyAPVHeight_,'D');
               ex_summary_.push_back( summary );
             }
             else if (height<0. )   {
               // channels sending corrupted data during the timing scan are processed here
               if( doRecovery_ && recovery_height!=0. ) set_gain(summary,recovery_height,'R');
-              else if( putDummyIntoBadChannels_ )      set_gain(summary,dummyAPVGain_,'D');
+              else if( putDummyIntoBadChannels_ )      set_gain(summary,dummyAPVHeight_,'D');
               ex_summary_.push_back( summary );
             }
             else {
@@ -441,7 +554,7 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
 
               // channles whose tickmark height is below threshold are processed here
               if( doRecovery_ && recovery_height!=0. ) set_gain(summary,recovery_height,'R');
-              else if ( putDummyIntoLowChannels_ )     set_gain(summary,dummyAPVGain_,'D');
+              else if ( putDummyIntoLowChannels_ )     set_gain(summary,dummyAPVHeight_,'D');
               summary_.push_back( summary );
             }
           } 
@@ -451,10 +564,10 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
           float recovery_height = apply_recovery(summary);
           if( !summary.is_connected ) {
             if( doRecovery_ && recovery_height!=0. ) set_gain(summary,recovery_height,'R');
-            else if( putDummyIntoUncabled_ )         set_gain(summary,dummyAPVGain_,'D');
+            else if( putDummyIntoUncabled_ )         set_gain(summary,dummyAPVHeight_,'D');
           } else {
             if( doRecovery_ && recovery_height!=0. ) set_gain(summary,recovery_height,'R');
-            else if( putDummyIntoUnscanned_ )        set_gain(summary,dummyAPVGain_,'D');
+            else if( putDummyIntoUnscanned_ )        set_gain(summary,dummyAPVHeight_,'D');
           }
           ex_summary_.push_back( summary );
         }
@@ -492,7 +605,21 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
 bool
 SiStripApvGainFromFileBuilder::read_summary(std::vector<Summary>& list) {
   list.clear();
-  const char* filename = recoveryList_.fullPath().c_str();
+  if( recoveryList_.compare("")==0 ) return true;
+
+  edm::FileInPath filepath;
+
+
+  try {
+    edm::FileInPath path( recoveryList_ ); 
+    filepath = path;
+  } catch ( ... ) {
+    edm::LogError("FileNotFound") << "@SUB=read_summary" << "File with summary list "
+                                  << recoveryList_ << " not in path!" << std::endl;
+    return false;
+  }
+
+  const char* filename = filepath.fullPath().c_str();
 
   std::ifstream summary_list ( filename );
   if ( !summary_list.is_open() ) {
@@ -501,49 +628,47 @@ SiStripApvGainFromFileBuilder::read_summary(std::vector<Summary>& list) {
     return false;
   }
 
-    std::string header = "  det id |APV| Connected |FED|CH|FEC|FECs|FECr|CCU|CCUc|i2cA|APVON|  noise  |tickHeig|AOH|Bias|DBgain|refHeigh|AOH|Bias|Status|";
-    std::string ruler  = "---------+---+-----------+---+--+---+----+----+---+----+----+-----+---------+--------+---+----+------+--------+---+----+------+";
+  edm::LogVerbatim("Workflow") << "Reading " << filename << " for gathering the summary list" << std::endl;
 
-  int count = -1;
+  std::string line;
+  while( std::getline(summary_list, line) ) {
+    // skip comment lines
+    if( line.find("#")==std::string::npos ) {
+      std::istringstream iss(line);
+      Summary s;
+      std::string con1,con2;
 
-  for ( ; ; ) {
-    count++;
-    Summary s;
-    std::string con1,con2;
-    //std::string scanning;
+      iss >> s.det_id          >> s.offlineAPV_id   >> con1 >> con2       >> s.FED_id             >> s.FED_ch
+          >> s.FEC_crate       >> s.FEC_slot        >> s.FEC_ring         >> s.CCU_addr           >> s.CCU_chan
+          >> s.i2cAdd          >> s.onlineAPV_id    >> s.noise            >> s.tickmark_height    >> s.aoh_gain
+          >> s.aoh_bias        >> s.gain_in_db      >> s.reference_height >> s.reference_aoh_gain >> s.reference_aoh_bias
+          >> s.tickmark_status >> s.channel_status  >> s.recovery_status  >> s.status_wrt_previous_run;
 
-    summary_list >> s.det_id          >> s.offlineAPV_id   >> con1 >> con2       >> s.FED_id             >> s.FED_ch 
-                 >> s.FEC_crate       >> s.FEC_slot        >> s.FEC_ring         >> s.CCU_addr           >> s.CCU_chan
-                 >> s.i2cAdd          >> s.onlineAPV_id    >> s.noise            >> s.tickmark_height    >> s.aoh_gain
-                 >> s.aoh_bias        >> s.gain_in_db      >> s.reference_height >> s.reference_aoh_gain >> s.reference_aoh_bias
-                 >> s.tickmark_status >> s.channel_status  >> s.recovery_status  >> s.status_wrt_previous_run;
+      s.is_connected = (con1.compare("NOT")==0)? false : true;
+      s.det_type     = s.detType( con2.c_str() );
+      s.is_scanned   = (s.tickmark_height!=999999.)?   true : false;
 
-    s.is_connected = (con1.compare("NOT")==0)? false : true;
-    s.det_type     = s.detType( con2.c_str() );
-    s.is_scanned   = (s.tickmark_height!=999999.)?   true : false;
+      if ( ! (iss.fail() || iss.fail() ) ) {
+        std::stringstream txt;
+        format_summary(txt, s);
+        edm::LogVerbatim("Workflow") << txt.str() << std::endl;
 
-    if ( ! (summary_list.eof() || summary_list.fail()) ) {
-
-      if (count==0) {
-        edm::LogVerbatim("Workflow") << "Reading " << filename << " for gathering the summary list" << std::endl;
-        edm::LogVerbatim("Workflow") << header << std::endl;
-        edm::LogVerbatim("Workflow") << ruler << std::endl;
+        // insert the record into the recovery list
+        recovery_.push_back( s );
+      } else {   
+        edm::LogError("FileReadError") << "@SUB=read_summary" << "unrecognized line format for: " << line << std::endl;
+        edm::LogError("FileReadError") << "@SUB=read_summary" << "skipping the rest of the file " << std::endl;
+        break;
       }
-      std::stringstream line;
-      format_summary(line, s);
-
-      edm::LogVerbatim("Workflow") << line.str() << std::endl;
-
-      // insert the gain value in the map
-      recovery_.push_back( s );
-
-    } else if (summary_list.eof()) {
-      edm::LogInfo("Workflow") << "@SUB=read_summary" << "EOF of " << filename << " reached." << std::endl;
-      break;
-    } else if (summary_list.fail()) {
-      edm::LogError("FileiReadError") << "@SUB=read_summary" << "error while reading " << filename << std::endl;
-      break;
+    } else {
+      edm::LogVerbatim("Workflow") << line << std::endl;
     }
+  }
+
+  if (summary_list.eof()) {
+    edm::LogInfo("Workflow") << "@SUB=read_summary" << "EOF of " << filename << " reached." << std::endl;
+  } else if (summary_list.fail()||summary_list.bad()) {
+    edm::LogError("FileReadError") << "@SUB=read_summary" << "error while reading " << filename << std::endl;
   }
 
   summary_list.close();
@@ -961,25 +1086,79 @@ void SiStripApvGainFromFileBuilder::output_ratio_maps() const {
     std::ofstream* ofile_3 = new std::ofstream("tracker_maps/Ratio_APVpair3.txt", std::ofstream::trunc);
     if ( !ofile_3->is_open() ) throw "cannot open tracker_maps/Ratio_APVpair3.txt file!";
 
+    std::ofstream* ofile_4 = new std::ofstream("tracker_maps/RatioBigDrop_APVpair1.txt", std::ofstream::trunc);
+    if ( !ofile_4->is_open() ) throw "cannot open tracker_maps/RatioBigDrop_APVpair1.txt file!";
+    std::ofstream* ofile_5 = new std::ofstream("tracker_maps/RatioBigDrop_APVpair2.txt", std::ofstream::trunc);
+    if ( !ofile_5->is_open() ) throw "cannot open tracker_maps/RatioBigDrop_APVpair2.txt file!";
+    std::ofstream* ofile_6 = new std::ofstream("tracker_maps/RatioBigDrop_APVpair3.txt", std::ofstream::trunc);
+    if ( !ofile_6->is_open() ) throw "cannot open tracker_maps/RatioBigDrop_APVpair3.txt file!";
+
 
     for(unsigned int i=0; i<summary_.size(); i++) {
       Summary s = summary_[i];
-      if( s.tickmark_height>0. && s.reference_height>0. && (s.aoh_gain-s.reference_aoh_gain)==0 ) {
+      if( s.tickmark_height>0. && s.reference_height>0.) {
+        // always try to rescale the reference height to fix the different AOH gain setting
+        float rescaled_height = 0.;
+        rescale_tickmark( s.reference_height, s.reference_aoh_gain, s.aoh_gain, rescaled_height);
+        float ratio = s.tickmark_height / rescaled_height;
+
+        if( s.offlineAPV_id==0 ) (*ofile_1) << s.det_id  << "    " << ratio << std::endl;
+        else if ( s.offlineAPV_id==2 ) (*ofile_2) << s.det_id  << "    " << ratio << std::endl;
+        else if ( s.offlineAPV_id==4 ) (*ofile_3) << s.det_id  << "    " << ratio << std::endl;
+
+        if( s.has_big_height_drop ) {
+          if( s.offlineAPV_id==0 ) (*ofile_4) << s.det_id  << "    " << ratio << std::endl;
+          else if ( s.offlineAPV_id==2 ) (*ofile_5) << s.det_id  << "    " << ratio << std::endl;
+          else if ( s.offlineAPV_id==4 ) (*ofile_6) << s.det_id  << "    " << ratio << std::endl;
+        }
+      }
+/*      if( s.tickmark_height>0. && s.reference_height>0. && (s.aoh_gain-s.reference_aoh_gain)==0 ) {
         float ratio = s.tickmark_height / s.reference_height;
         if( s.offlineAPV_id==0 ) (*ofile_1) << s.det_id  << "    " << ratio << std::endl;
         else if ( s.offlineAPV_id==2 ) (*ofile_2) << s.det_id  << "    " << ratio << std::endl;
         else if ( s.offlineAPV_id==4 ) (*ofile_3) << s.det_id  << "    " << ratio << std::endl;
       }
+      if( s.has_big_height_drop ) {
+        float rescaled_height = 0.;
+        rescale_tickmark( s.reference_height, s.reference_aoh_gain, s.aoh_gain, rescaled_height); 
+        float ratio = s.tickmark_height / rescaled_height;
+        if( s.offlineAPV_id==0 ) (*ofile_4) << s.det_id  << "    " << ratio << std::endl;
+        else if ( s.offlineAPV_id==2 ) (*ofile_5) << s.det_id  << "    " << ratio << std::endl;
+        else if ( s.offlineAPV_id==4 ) (*ofile_6) << s.det_id  << "    " << ratio << std::endl;
+      }*/
     }
 
     for(unsigned int i=0; i<ex_summary_.size(); i++) {
       Summary s = ex_summary_[i];
-      if( s.tickmark_height>0. && s.reference_height>0. && (s.aoh_gain-s.reference_aoh_gain)==0 ) {
+      if( s.tickmark_height>0. && s.reference_height>0.) {
+        float rescaled_height = 0.;
+        rescale_tickmark( s.reference_height, s.reference_aoh_gain, s.aoh_gain, rescaled_height);
+        float ratio = s.tickmark_height / rescaled_height;
+
+        if( s.offlineAPV_id==0 ) (*ofile_1) << s.det_id  << "    " << ratio << std::endl;
+        else if ( s.offlineAPV_id==2 ) (*ofile_2) << s.det_id  << "    " << ratio << std::endl;
+        else if ( s.offlineAPV_id==4 ) (*ofile_3) << s.det_id  << "    " << ratio << std::endl;
+
+        if( s.has_big_height_drop ) {
+          if( s.offlineAPV_id==0 ) (*ofile_4) << s.det_id  << "    " << ratio << std::endl;
+          else if ( s.offlineAPV_id==2 ) (*ofile_5) << s.det_id  << "    " << ratio << std::endl;
+          else if ( s.offlineAPV_id==4 ) (*ofile_6) << s.det_id  << "    " << ratio << std::endl;
+        }
+      }
+/*      if( s.tickmark_height>0. && s.reference_height>0. && (s.aoh_gain-s.reference_aoh_gain)==0 ) {
         float ratio = s.tickmark_height / s.reference_height;
         if( s.offlineAPV_id==0 ) (*ofile_1) << s.det_id  << "    " << ratio << std::endl;
         else if ( s.offlineAPV_id==2 ) (*ofile_2) << s.det_id  << "    " << ratio << std::endl;
         else if ( s.offlineAPV_id==4 ) (*ofile_3) << s.det_id  << "    " << ratio << std::endl;
       }
+      if( s.has_big_height_drop ) {
+        float rescaled_height = 0.;
+        rescale_tickmark( s.reference_height, s.reference_aoh_gain, s.aoh_gain, rescaled_height);
+        float ratio = s.tickmark_height / rescaled_height;
+        if( s.offlineAPV_id==0 ) (*ofile_4) << s.det_id  << "    " << ratio << std::endl;
+        else if ( s.offlineAPV_id==2 ) (*ofile_5) << s.det_id  << "    " << ratio << std::endl;
+        else if ( s.offlineAPV_id==4 ) (*ofile_6) << s.det_id  << "    " << ratio << std::endl;
+      }*/
     }
 
     ofile_1->close();
@@ -990,6 +1169,15 @@ void SiStripApvGainFromFileBuilder::output_ratio_maps() const {
 
     ofile_3->close();
     delete ofile_3;
+
+    ofile_4->close();
+    delete ofile_4;
+
+    ofile_5->close();
+    delete ofile_5;
+
+    ofile_6->close();
+    delete ofile_6;
 }
 
 void SiStripApvGainFromFileBuilder::output_tickmark_maps(std::vector<Gain*>* maps, const char* basename) const {
@@ -1019,14 +1207,15 @@ void SiStripApvGainFromFileBuilder::output_tickmark_maps(std::vector<Gain*>* map
 
 void SiStripApvGainFromFileBuilder::output_summary() const {
 
-    std::string header = "  det id |APV| Connected |FED|CH|FEC|FECs|FECr|CCU|CCUc|i2cA|APVON|  noise  |tickHeig|AOH|Bias|DBgain|refHeigh|AOH|Bias|Status|";
-    std::string ruler  = "---------+---+-----------+---+--+---+----+----+---+----+----+-----+---------+--------+---+----+------+--------+---+----+------+";
+    std::string header = "# det id |APV| Connected |FED|CH|FEC|FECs|FECr|CCU|CCUc|i2cA|APVON|  noise  |tickHeig|AOH|Bias|DBgain|refHeigh|AOH|Bias|Status|";
+    std::string ruler  = "#--------+---+-----------+---+--+---+----+----+---+----+----+-----+---------+--------+---+----+------+--------+---+----+------+";
 
     // open output files
     std::ofstream* oSummary  = new std::ofstream("SiStripApvGainSummary.txt",std::ofstream::trunc);
     std::ofstream* oUncabled = new std::ofstream("SiStripApvGainUncabled.txt",std::ofstream::trunc);
     std::ofstream* oUncAndSc = new std::ofstream("SiStripApvGainUncAndSc.txt",std::ofstream::trunc);
     std::ofstream* oBad      = new std::ofstream("SiStripApvGainBad.txt",std::ofstream::trunc);
+    std::ofstream* oBigDrop  = new std::ofstream("SiStripApvGainBigDrop.txt",std::ofstream::trunc);
     std::ofstream* oNoisy    = new std::ofstream("SiStripApvGainNoisy.txt",std::ofstream::trunc);
     std::ofstream* oCheck    = new std::ofstream("SiStripApvGainToBeChecked.txt",std::ofstream::trunc);
     std::ofstream* oExtreme  = new std::ofstream("SiStripApvGainExtreme.txt",std::ofstream::trunc);
@@ -1035,6 +1224,7 @@ void SiStripApvGainFromFileBuilder::output_summary() const {
     (*oUncabled) << header << std::endl << ruler << std::endl;
     (*oUncAndSc) << header << std::endl << ruler << std::endl;
     (*oBad)      << header << std::endl << ruler << std::endl;
+    (*oBigDrop)  << header << std::endl << ruler << std::endl;
     (*oNoisy)    << header << std::endl << ruler << std::endl;
     (*oCheck)    << header << std::endl << ruler << std::endl;
     (*oExtreme)  << header << std::endl << ruler << std::endl;
@@ -1048,6 +1238,7 @@ void SiStripApvGainFromFileBuilder::output_summary() const {
         if ( (!summary.is_connected) && (summary.is_scanned) ) (*oUncAndSc) << line.str() << std::endl;
         else if ( !summary.is_connected )                      (*oUncabled) << line.str() << std::endl;
         else if ( summary.tickmark_status=='B' )               (*oBad)      << line.str() << std::endl;
+        else if ( summary.has_big_height_drop  )               (*oBigDrop)  << line.str() << std::endl;
         else if ( summary.tickmark_status=='N' )               (*oNoisy)    << line.str() << std::endl;
         else if ( summary.tickmark_status=='V' )               (*oCheck)    << line.str() << std::endl;
         else if ( summary.tickmark_status=='E' )               (*oExtreme)  << line.str() << std::endl;
@@ -1062,6 +1253,7 @@ void SiStripApvGainFromFileBuilder::output_summary() const {
         if ( (!summary.is_connected) && (summary.is_scanned) ) (*oUncAndSc) << line.str() << std::endl;
         else if ( !summary.is_connected )                      (*oUncabled) << line.str() << std::endl;
         else if ( summary.tickmark_status=='B' )               (*oBad)      << line.str() << std::endl;
+        else if ( summary.has_big_height_drop  )               (*oBigDrop)  << line.str() << std::endl;
         else if ( summary.tickmark_status=='N' )               (*oNoisy)    << line.str() << std::endl;
         else if ( summary.tickmark_status=='V' )               (*oCheck)    << line.str() << std::endl;
         else if ( summary.tickmark_status=='E' )               (*oExtreme)  << line.str() << std::endl;
@@ -1072,6 +1264,7 @@ void SiStripApvGainFromFileBuilder::output_summary() const {
     oUncabled->close();  delete oUncabled;
     oUncAndSc->close();  delete oUncAndSc;
     oBad->close();       delete oBad;
+    oBigDrop->close();   delete oBigDrop;
     oNoisy->close();     delete oNoisy;
     oCheck->close();     delete oCheck;
     oExtreme->close();   delete oExtreme;
