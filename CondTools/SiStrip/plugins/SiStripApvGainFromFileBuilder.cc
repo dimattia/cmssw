@@ -63,7 +63,8 @@ SiStripApvGainFromFileBuilder::SiStripApvGainFromFileBuilder( const edm::Paramet
   gfp_(iConfig.getUntrackedParameter<edm::FileInPath>("geoFile",edm::FileInPath("CalibTracker/SiStripCommon/data/SiStripDetInfo.dat"))),
   tfp_(iConfig.getUntrackedParameter<edm::FileInPath>("tickFile",edm::FileInPath("CondTools/SiStrip/data/tickheight.txt"))),
   rfp_(iConfig.getUntrackedParameter<edm::FileInPath>("referenceFile",edm::FileInPath("CondTools/SiStrip/data/tickheight.txt"))),
-  nfp_(iConfig.getUntrackedParameter<edm::FileInPath>("noiseFile",edm::FileInPath("CondTools/SiStrip/data/noise_May.root"))),
+  channelNoise_(iConfig.getUntrackedParameter<std::string>("channelNoise","CondTools/SiStrip/data/02Jun2015_noise.root")),
+  referenceNoise_(iConfig.getUntrackedParameter<std::string>("referenceNoise","CondTools/SiStrip/data/noise_May.root")),
   recoveryList_(iConfig.getUntrackedParameter<std::string>("recoveryList","")),
   heightThreshold_(iConfig.getUntrackedParameter<double>("heightThreshold",0.)), 
   goodHeightLimit_(iConfig.getUntrackedParameter<double>("goodHeightLimit",440.)),
@@ -133,6 +134,9 @@ SiStripApvGainFromFileBuilder::beginJob() {
     std::string stag       = "surveyed_noise_vs_gain_"+s.detType();
     std::string stit       = "Noise versus Gain of surveyed channels for "+s.detType();
     h_surveyed_channels[i] = fs->make<TH2F>(stag.c_str(),stit.c_str(),100,0.,2.,124,0.,31);
+    std::string wtag       = "nVar_noise_vs_gain_"+s.detType();
+    std::string wtit       = "Noise versus Gain of channels with big noise variation for "+s.detType();
+    h_noiseVar_channels[i] = fs->make<TH2F>(wtag.c_str(),wtit.c_str(),100,0.,2.,124,0.,31);
     std::string ntag       = "noisy_noise_vs_gain_"+s.detType();
     std::string ntit       = "Noise versus Gain of noisy channels for "+s.detType();
     h_noisy_channels[i]    = fs->make<TH2F>(ntag.c_str(),ntit.c_str(),100,0.,2.,124,0.,31);
@@ -170,7 +174,10 @@ SiStripApvGainFromFileBuilder::endJob() {
       float noiseFromTiming    = a*summary.gain_in_db +b;
       float noiseFromReference = a*(summary.reference_height/640.) +b;
 
-      float noiseRatio = summary.noise/noiseFromTiming;
+      bool difference_ok = summary.reference_height!=999999. && summary.noise>0. && summary.reference_noise>0.;
+      float noiseRatioM = summary.noise/summary.reference_noise;
+      float noiseRatioF = noiseFromTiming/noiseFromReference;
+      float noise_difference = (difference_ok)? std::fabs( noiseRatioM-noiseRatioF ) : 1;
 
       bool correctDetType = ( summary.det_type==i );
 
@@ -191,15 +198,27 @@ SiStripApvGainFromFileBuilder::endJob() {
           // set the status as Noisy
           summary.tickmark_status='N';
           h_noisy_channels[i]->Fill( summary.gain_in_db, summary.noise );
-          if ( (std::fabs(noiseFromReference)-summary.noise)/std::fabs(noiseFromReference)>0.35 ) {
+          if ( (std::fabs(noiseFromReference)-summary.reference_noise)/std::fabs(noiseFromReference)>0.35 ) {
             summary.status_wrt_previous_run = '=';
           } else {
             summary.status_wrt_previous_run = '-';
           }
           s++;
-      } else if ( correctDetType && summary.tickmark_status=='V' && std::fabs( 1.-noiseRatio )>0.05 ) {
+      } else if ( correctDetType && summary.tickmark_status=='V' && noise_difference>0.05 ) {
+        
         // nothing to do, discrepancy with reference is more than 5%, keep eyes open
+        float noise_diff = std::fabs( (std::fabs(noiseFromTiming)-summary.noise) );
+        float refer_diff = std::fabs( (std::fabs(noiseFromTiming)-summary.reference_noise) );
+        if ( noise_diff<refer_diff ) summary.status_wrt_previous_run = '+';
+        else                         summary.status_wrt_previous_run = '-';
         h_surveyed_channels[i]->Fill( summary.gain_in_db, summary.noise );
+        s++;
+      } else if ( correctDetType && summary.tickmark_status=='W' ) {
+        float noise_diff = std::fabs( (std::fabs(noiseFromTiming)-summary.noise) );
+        float refer_diff = std::fabs( (std::fabs(noiseFromTiming)-summary.reference_noise) );
+        if ( noise_diff<refer_diff ) summary.status_wrt_previous_run = '+';
+        else                         summary.status_wrt_previous_run = '-';
+        h_noiseVar_channels[i]->Fill( summary.gain_in_db, summary.noise );
         s++;
       } else if ( correctDetType && (!is_aoh_gain_ok(summary.tickmark_height,summary.aoh_gain)) ) {
         // this one has wrong AOH gain setting
@@ -321,7 +340,7 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
   edm::LogInfo("Workflow") << "@SUB=analyze" <<  "Insert SiStripApvGain Data." << std::endl;
   this->read_tickmark();
   if ( !this->read_summary(recovery_) ) exit(1);
-  if ( !this->read_noise_from_root( nfp_.fullPath().c_str(), &noise_ ) ) exit(1);
+  if ( !this->read_noise() ) exit(1);
 
   if (outputMaps_) {
     try {
@@ -401,6 +420,8 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
         tickmark_reference(it->second.nApvs,std::pair<int,tickmark_info>(-1,tickmark_info() ));
     std::vector<std::pair<int,noise_info>>
         noise_for_detId(it->second.nApvs,std::pair<int,noise_info>(-1,noise_info() ));
+    std::vector<std::pair<int,noise_info>>
+        noise_reference(it->second.nApvs,std::pair<int,noise_info>(-1,noise_info() ));
 
     for (unsigned int ca = 0; ca<connection.size(); ca++) {
       if( connection[ca]!=0 ) {
@@ -410,12 +431,15 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
         tickmark_for_detId[ online2offline(id2,it->second.nApvs) ].first = id2;
         noise_for_detId[ online2offline(id1,it->second.nApvs) ].first = id1;
         noise_for_detId[ online2offline(id2,it->second.nApvs) ].first = id2;
+        noise_reference[ online2offline(id1,it->second.nApvs) ].first = id1;
+        noise_reference[ online2offline(id2,it->second.nApvs) ].first = id2;
       }
     }
 
     height_from_maps(it->first, it->second.nApvs, tickmark_for_detId);
     height_from_reference(it->first, it->second.nApvs, tickmark_reference);
-    noise_from_maps(it->first, it->second.nApvs, noise_for_detId);
+    noise_from_maps(it->first, it->second.nApvs, noise_, noise_for_detId);
+    noise_from_maps(it->first, it->second.nApvs, ref_noise_, noise_reference);
 
     std::vector<float> theSiStripVector;
 
@@ -431,6 +455,8 @@ void SiStripApvGainFromFileBuilder::analyze(const edm::Event& evt, const edm::Ev
       summary.strip_length = reader.getNumberOfApvsAndStripLength(it->first).second;
       summary.noise    = noise_for_detId.at(j).second.noise;
       summary.pedestal = noise_for_detId.at(j).second.pedestal;  
+      summary.reference_noise    = noise_reference.at(j).second.noise;
+      summary.reference_pedestal = noise_reference.at(j).second.pedestal;
       summary.FED_id = -1;
       summary.FED_ch = -1;
       summary.i2cAdd = -1;
@@ -638,11 +664,11 @@ SiStripApvGainFromFileBuilder::read_summary(std::vector<Summary>& list) {
       Summary s;
       std::string con1,con2;
 
-      iss >> s.det_id          >> s.offlineAPV_id   >> con1 >> con2       >> s.FED_id             >> s.FED_ch
-          >> s.FEC_crate       >> s.FEC_slot        >> s.FEC_ring         >> s.CCU_addr           >> s.CCU_chan
-          >> s.i2cAdd          >> s.onlineAPV_id    >> s.noise            >> s.tickmark_height    >> s.aoh_gain
-          >> s.aoh_bias        >> s.gain_in_db      >> s.reference_height >> s.reference_aoh_gain >> s.reference_aoh_bias
-          >> s.tickmark_status >> s.channel_status  >> s.recovery_status  >> s.status_wrt_previous_run;
+      iss >> s.det_id             >> s.offlineAPV_id   >> con1 >> con2       >> s.FED_id           >> s.FED_ch
+          >> s.FEC_crate          >> s.FEC_slot        >> s.FEC_ring         >> s.CCU_addr         >> s.CCU_chan
+          >> s.i2cAdd             >> s.onlineAPV_id    >> s.noise            >> s.tickmark_height  >> s.aoh_gain
+          >> s.aoh_bias           >> s.gain_in_db      >> s.reference_noise  >> s.reference_height >> s.reference_aoh_gain 
+          >> s.reference_aoh_bias >> s.tickmark_status >> s.channel_status   >> s.recovery_status  >> s.status_wrt_previous_run;
 
       s.is_connected = (con1.compare("NOT")==0)? false : true;
       s.det_type     = s.detType( con2.c_str() );
@@ -856,6 +882,35 @@ SiStripApvGainFromFileBuilder::read_tickmark_from_ascii(const char* filename,
   }
 
   thickmark_heights.close();
+  return true;
+}
+
+bool
+SiStripApvGainFromFileBuilder::read_noise() {
+  edm::FileInPath channelNoise_filepath;
+  try {
+    edm::FileInPath path( channelNoise_ );
+    channelNoise_filepath = path;
+  } catch ( ... ) {
+    edm::LogError("FileNotFound") << "@SUB=read_noise" << "File with noise result "
+                                  << channelNoise_ << " not in path!" << std::endl;
+    return false;
+  }
+  
+  if( !this->read_noise_from_root( channelNoise_filepath.fullPath().c_str(), &noise_) ) return false;
+
+  edm::FileInPath referenceNoise_filepath;
+  try {
+    edm::FileInPath path( referenceNoise_ );
+    referenceNoise_filepath = path;
+  } catch ( ... ) {
+    edm::LogError("FileNotFound") << "@SUB=read_noise" << "File with noise result "
+                                  << referenceNoise_ << " not in path!" << std::endl;
+    return false;
+  }
+  
+  if( !this->read_noise_from_root( referenceNoise_filepath.fullPath().c_str(), &ref_noise_) ) return false;
+
   return true;
 }
 
@@ -1207,8 +1262,8 @@ void SiStripApvGainFromFileBuilder::output_tickmark_maps(std::vector<Gain*>* map
 
 void SiStripApvGainFromFileBuilder::output_summary() const {
 
-    std::string header = "# det id |APV| Connected |FED|CH|FEC|FECs|FECr|CCU|CCUc|i2cA|APVON|  noise  |tickHeig|AOH|Bias|DBgain|refHeigh|AOH|Bias|Status|";
-    std::string ruler  = "#--------+---+-----------+---+--+---+----+----+---+----+----+-----+---------+--------+---+----+------+--------+---+----+------+";
+    std::string header = "# det id |APV| Connected |FED|CH|FEC|FECs|FECr|CCU|CCUc|i2cA|APV|noise| tickHeig|AOH|Bias|DB G1|refNo| refHeigh|AOH|Bias|Status |";
+    std::string ruler  = "#--------+---+-----------+---+--+---+----+----+---+----+----+---+-----+---------+---+----+-----+-----+---------+---+----+-------";
 
     // open output files
     std::ofstream* oSummary  = new std::ofstream("SiStripApvGainSummary.txt",std::ofstream::trunc);
@@ -1240,7 +1295,8 @@ void SiStripApvGainFromFileBuilder::output_summary() const {
         else if ( summary.tickmark_status=='B' )               (*oBad)      << line.str() << std::endl;
         else if ( summary.has_big_height_drop  )               (*oBigDrop)  << line.str() << std::endl;
         else if ( summary.tickmark_status=='N' )               (*oNoisy)    << line.str() << std::endl;
-        else if ( summary.tickmark_status=='V' )               (*oCheck)    << line.str() << std::endl;
+        else if ( summary.tickmark_status=='V' || 
+                  summary.tickmark_status=='W' )               (*oCheck)    << line.str() << std::endl;
         else if ( summary.tickmark_status=='E' )               (*oExtreme)  << line.str() << std::endl;
         else                                                   (*oSummary)  << line.str() << std::endl;      
     }
@@ -1255,7 +1311,8 @@ void SiStripApvGainFromFileBuilder::output_summary() const {
         else if ( summary.tickmark_status=='B' )               (*oBad)      << line.str() << std::endl;
         else if ( summary.has_big_height_drop  )               (*oBigDrop)  << line.str() << std::endl;
         else if ( summary.tickmark_status=='N' )               (*oNoisy)    << line.str() << std::endl;
-        else if ( summary.tickmark_status=='V' )               (*oCheck)    << line.str() << std::endl;
+        else if ( summary.tickmark_status=='V' ||
+                  summary.tickmark_status=='W' )               (*oCheck)    << line.str() << std::endl;
         else if ( summary.tickmark_status=='E' )               (*oExtreme)  << line.str() << std::endl;
         else                                                   (*oSummary)  << line.str() << std::endl;
     }
@@ -1278,6 +1335,8 @@ void SiStripApvGainFromFileBuilder::format_summary(std::stringstream& line, Summ
     std::ios::fmtflags flags = line.flags();
     int tik_precision = (summary.tickmark_height<0 || summary.tickmark_height==999999.)? 0 : 3;
     int ref_precision = (summary.reference_height<0 || summary.reference_height==999999.)? 0 : 3;
+    int nos_precision = (summary.noise<100)? 2 : 1;
+    int nor_precision = (summary.reference_noise<100)? 2 : 1;
 
     line << summary.det_id
          << std::setw(3)  << summary.offlineAPV_id << "  "
@@ -1289,17 +1348,17 @@ void SiStripApvGainFromFileBuilder::format_summary(std::stringstream& line, Summ
          << std::setw(2)  << summary.FEC_ring      << "  " 
          << std::setw(3)  << summary.CCU_addr      << "  " 
          << std::setw(2)  << summary.CCU_chan      << "  " 
-         << std::setw(3)  << summary.i2cAdd        << "  " 
-         << std::setw(3)  << summary.onlineAPV_id  << "   "
-         << std::setw(8)  << summary.noise         << "   " 
-         << std::setprecision(tik_precision) << std::fixed << std::setw(7) << summary.tickmark_height << " " 
+         << std::setw(3)  << summary.i2cAdd        << " " 
+         << std::setw(3)  << summary.onlineAPV_id  << "  "
+         << std::setprecision(nos_precision) << std::fixed << std::setw(5) << summary.noise           << "  " 
+         << std::setprecision(tik_precision) << std::fixed << std::setw(7) << summary.tickmark_height << " "
          << std::setprecision(0) << std::setw(3) << summary.aoh_gain << "  " 
          << std::setw(3) << summary.aoh_bias
-         << std::setprecision(3) << std::fixed << std::setw(7) << summary.gain_in_db << "  " 
-         << std::setiosflags(flags) << std::setw(7) << std::setprecision(ref_precision)
-         << summary.reference_height << " " 
+         << std::setprecision(3) << std::fixed << std::setw(7) << summary.gain_in_db << " " 
+         << std::setprecision(nor_precision)   << std::fixed   << std::setw(5)          << summary.reference_noise  << "  "
+         << std::setiosflags(flags) << std::setw(7) << std::setprecision(ref_precision) << summary.reference_height << " "
          << std::setprecision(0) << std::setw(3) << summary.reference_aoh_gain << "  "
-         << std::setw(3) << summary.reference_aoh_bias << " "
+         << std::setw(3) << summary.reference_aoh_bias << "  "
          << summary.tickmark_status  << " "
          << summary.channel_status << " "
          << summary.recovery_status << " "
@@ -1418,7 +1477,7 @@ SiStripApvGainFromFileBuilder::height_from_reference(uint32_t det_id, uint16_t t
 }
 
 void
-SiStripApvGainFromFileBuilder::noise_from_maps(uint32_t det_id, uint16_t totalAPVs,
+SiStripApvGainFromFileBuilder::noise_from_maps(uint32_t det_id, uint16_t totalAPVs, std::vector<Noise*>& data, 
                                                std::vector< std::pair<int,noise_info> >& noise_info) const {
   std::stringstream ex_msg;
   ex_msg << "two APVs with the same online id for det id " << det_id
@@ -1427,11 +1486,11 @@ SiStripApvGainFromFileBuilder::noise_from_maps(uint32_t det_id, uint16_t totalAP
   for (unsigned int i=0; i<6; i++) {
     int offlineAPV_id = online2offline(i, totalAPVs);
     try {
-      Noise* map =  noise_.at(i);
+      Noise* map =  data.at(i);
       if( map!=0 ) {
         Noise::const_iterator el = map->find( det_id );
         if ( el!=map->end() ) {
-          if( noise_info[offlineAPV_id].second.noise!=999999. ) throw( ex_msg.str() );
+          if( noise_info[offlineAPV_id].second.noise!=-9. ) throw( ex_msg.str() );
           noise_info[offlineAPV_id].second=el->second;
         }
       }
@@ -1455,11 +1514,14 @@ SiStripApvGainFromFileBuilder::set_tickmark_status(Summary& summary) const {
     if ( is_reference_usable ) {
       //summary.recovery_status = 'R';
       summary.status_wrt_previous_run = '=';
-      float ratio = summary.tickmark_height/summary.reference_height;
+      float height_ratio = summary.tickmark_height/summary.reference_height;
+      float noise_ratio  = (summary.noise>0. && summary.reference_noise>0. )? summary.noise/summary.reference_noise : 1.;
 
       // check for channels with tickmark variation bigger than 5% w.r.t. reference
-      if ( std::fabs(1.-ratio)>0.05 ) {
+      if ( std::fabs(1.-height_ratio)>0.05 ) {
         summary.tickmark_status = 'V';
+      } else if ( std::fabs(1-noise_ratio)>0.05 ) {
+        summary.tickmark_status = 'W';
       }
     } else {
       //summary.recovery_status = 'U';
