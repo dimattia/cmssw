@@ -77,7 +77,15 @@ SiStripApvGainFromFileBuilder::SiStripApvGainFromFileBuilder( const edm::Paramet
   putDummyIntoBadChannels_(iConfig.getUntrackedParameter<bool>("putDummyIntoBadChannels",1.)),
   putDummyIntoLowChannels_(iConfig.getUntrackedParameter<bool>("putDummyIntoLowChannels",0.)),
   outputMaps_(iConfig.getUntrackedParameter<bool>("outputMaps",0)),
-  outputSummary_(iConfig.getUntrackedParameter<bool>("outputSummary",0))
+  outputSummary_(iConfig.getUntrackedParameter<bool>("outputSummary",0)),
+  removeTIBFromTickmarks_(iConfig.getUntrackedParameter<bool>("removeTIBFromTickmarks",0)),
+  removeTIDFromTickmarks_(iConfig.getUntrackedParameter<bool>("removeTIDFromTickmarks",0)),
+  removeTOBFromTickmarks_(iConfig.getUntrackedParameter<bool>("removeTOBFromTickmarks",0)),
+  removeTECFromTickmarks_(iConfig.getUntrackedParameter<bool>("removeTECFromTickmarks",0)),
+  removeTIBFromNoise_(iConfig.getUntrackedParameter<bool>("removeTIBFromNoise",0)),
+  removeTIDFromNoise_(iConfig.getUntrackedParameter<bool>("removeTIDFromNoise",0)),
+  removeTOBFromNoise_(iConfig.getUntrackedParameter<bool>("removeTOBFromNoise",0)),
+  removeTECFromNoise_(iConfig.getUntrackedParameter<bool>("removeTECFromNoise",0))
 {
   siStripQuality_ = 0;
   siStripQuality_ = new SiStripQuality();
@@ -161,10 +169,14 @@ SiStripApvGainFromFileBuilder::endJob() {
     TProfile* p = fs->make<TProfile>( *h_noise_vs_gain[i]->ProfileX() );
     p->Fit( "pol1","","",0.85,1.3 );
     TF1* f = p->GetFunction("pol1");
+
+    // skip analysis if fit hasn't been performed
+    if (f==0)  continue;
+
     float a     = f->GetParameter(1);
-    //float err_a = f->GetParError(1)*5.;
+    float err_a = f->GetParError(1)*5.;
     float b     = f->GetParameter(0);
-    //float err_b = f->GetParError(0)*5.;
+    float err_b = f->GetParError(0)*5.;
 
     //checking the status of all the "bad" channels
     std::vector<Summary>::iterator s = summary_.begin();
@@ -175,9 +187,10 @@ SiStripApvGainFromFileBuilder::endJob() {
       float noiseFromReference = a*(summary.reference_height/640.) +b;
 
       bool difference_ok = summary.reference_height!=999999. && summary.noise>0. && summary.reference_noise>0.;
-      float noiseRatioM = summary.noise/summary.reference_noise;
-      float noiseRatioF = noiseFromTiming/noiseFromReference;
-      float noise_difference = (difference_ok)? std::fabs( noiseRatioM-noiseRatioF ) : 1;
+      //float noiseRatioM = summary.noise/summary.reference_noise;
+      //float noiseRatioF = noiseFromTiming/noiseFromReference;
+      float noise_difference = (difference_ok)? std::fabs(noiseFromReference - summary.reference_noise) : 0;
+      float tolerance   = 2.*(std::fabs(err_a*summary.gain_in_db) + std::fabs(err_b));
 
       bool correctDetType = ( summary.det_type==i );
 
@@ -204,7 +217,7 @@ SiStripApvGainFromFileBuilder::endJob() {
             summary.status_wrt_previous_run = '-';
           }
           s++;
-      } else if ( correctDetType && summary.tickmark_status=='V' && noise_difference>0.05 ) {
+      } else if ( correctDetType && summary.tickmark_status=='V' && noise_difference>tolerance ) {
         
         // nothing to do, discrepancy with reference is more than 5%, keep eyes open
         float noise_diff = std::fabs( (std::fabs(noiseFromTiming)-summary.noise) );
@@ -763,6 +776,10 @@ SiStripApvGainFromFileBuilder::read_tickmark_from_root(const char* filename,
       return false;
     }
 
+    //build the filter mask
+    uint8_t filter = filter_mask( removeTIBFromTickmarks_, removeTIDFromTickmarks_,
+                                  removeTOBFromTickmarks_, removeTECFromTickmarks_ );
+
     //connect branches
     double det_id     = 999999.;
     double apv_id     = 999999.;
@@ -788,6 +805,10 @@ SiStripApvGainFromFileBuilder::read_tickmark_from_root(const char* filename,
         LogTrace("Debug") << "|  Det Id   |  APV Id  |   Tickmark   |   AOH GAIN   |   AOH BIAS   " << std::endl;
         LogTrace("Debug") << "+-----------+----------+--------------+--------------+--------------" << std::endl;
       }
+
+      // filter out if needed
+      if ( filter & filter_mask(is_TIB(det_id), is_TID(det_id), is_TOB(det_id), is_TEC(det_id)) ) continue;
+
       LogTrace("Debug") << std::setw(11) << det_id
                         << std::setw(8)  << apv_id
                         << std::setw(14) << apv_height
@@ -932,6 +953,11 @@ SiStripApvGainFromFileBuilder::read_noise_from_root( const char* filename, std::
     return false;
   }
 
+  //build the filter mask
+  uint8_t filter = filter_mask( removeTIBFromNoise_, removeTIDFromNoise_,
+                                removeTOBFromNoise_, removeTECFromNoise_ );
+
+
   //connect branches
   double det_id       = 999999.;
   double apv_id       = 999999.;
@@ -955,6 +981,10 @@ SiStripApvGainFromFileBuilder::read_noise_from_root( const char* filename, std::
       LogTrace("Debug") << "|  Det Id   |  APV Id  |     Noise    |   Pedestal   " << std::endl;
       LogTrace("Debug") << "+-----------+----------+--------------+--------------" << std::endl;
     }
+
+    // filter out if needed
+    if ( filter & filter_mask(is_TIB(det_id), is_TID(det_id), is_TOB(det_id), is_TEC(det_id)) ) continue;
+
     LogTrace("Debug") << std::setw(11) << det_id
                       << std::setw(8)  << apv_id
                       << std::setw(14) << apv_noise
@@ -1081,24 +1111,24 @@ void SiStripApvGainFromFileBuilder::output_topology_maps() const {
 
     for(unsigned int i=0; i<summary_.size(); i++) {
       Summary s = summary_[i];
-      int APV_pairIndex = s.offlineAPV_id/2;
+      int APV_pairIndex = (s.offlineAPV_id<=5)? s.offlineAPV_id/2 : 0;
       std::pair<uint32_t,float> p = std::pair<uint32_t,float>(s.det_id,s.tickmark_height);
-      if ( (!s.is_connected) && (s.is_scanned) ) UNC[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='B' )         BAD[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='V' )         TBC[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='E' )         EXT[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='N' )         NSY[APV_pairIndex].insert( p );
+      if ( (!s.is_connected) && (s.is_scanned) )          UNC[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='B' && s.is_connected) BAD[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='V' )                  TBC[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='E' )                  EXT[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='N' )                  NSY[APV_pairIndex].insert( p );
     }
 
     for(unsigned int i=0; i<ex_summary_.size(); i++) {
       Summary s = ex_summary_[i];
-      int APV_pairIndex = s.offlineAPV_id/2;
+      int APV_pairIndex = (s.offlineAPV_id<=5)? s.offlineAPV_id/2 : 0;
       std::pair<uint32_t,float> p = std::pair<uint32_t,float>(s.det_id,s.tickmark_height);
-      if ( (!s.is_connected) && (s.is_scanned) ) UNC[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='B' )         BAD[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='V' )         TBC[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='E' )         EXT[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='N' )         NSY[APV_pairIndex].insert( p );
+      if ( (!s.is_connected) && (s.is_scanned) )          UNC[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='B' && s.is_connected) BAD[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='V' )                  TBC[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='E' )                  EXT[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='N' )                  NSY[APV_pairIndex].insert( p );
     }
 
     // dump the set content into the output files
@@ -1329,7 +1359,8 @@ void SiStripApvGainFromFileBuilder::output_summary() const {
 
 
 void SiStripApvGainFromFileBuilder::format_summary(std::stringstream& line, Summary summary) const {
-    std::string conn = (summary.is_connected)? summary.detTopo()+" "+summary.detType()  : "NOT CONN";
+    std::string conn = (summary.is_connected)? detector_topology(summary.det_id)+" "+summary.detType()  : 
+                                               "NOT CONN";
     //std::string scan = (summary.is_scanned)?   "SCAN" : "NOT_SCAN";
 
     std::ios::fmtflags flags = line.flags();
