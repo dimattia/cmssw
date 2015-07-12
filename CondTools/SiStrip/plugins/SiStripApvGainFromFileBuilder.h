@@ -106,25 +106,6 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
                      }
                      return 0;
                    }
-                   std::string detTopo() {
-                     int subDetId = ((det_id>>25)&0x7);
-                     std::stringstream out;
-                     switch(subDetId){
-                       case 3: //TIB
-                         out << "TIB_L" << TIBDetId(det_id).layer();
-                         return out.str();
-                       case 4: //TID
-                         out << "TID_W" << (-1*(2*(int)TIDDetId(det_id).side()-3)*(int)TIDDetId(det_id).wheel());
-                         return out.str();
-                       case 5: //TOB
-                         out << "TOB_L" << TOBDetId(det_id).layer();
-                         return out.str();
-                       case 6: //TEC
-                         out << "TEC_W" << (-1*(2*(int)TECDetId(det_id).side()-3)*(int)TECDetId(det_id).wheel());
-                         return out.str();
-                     }
-                     return "";
-                   }
                  } Summary;
 
   /** Brief Constructor.
@@ -172,6 +153,16 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   bool putDummyIntoLowChannels_; /*!< Flag for putting the dummy gain in the channels with tickmark heights under threshold. */
   bool outputMaps_;              /*!< Flag for dumping the internal maps on ASCII files. */
   bool outputSummary_;           /*!< Flag for dumping the summary of the exceptions during the DB filling. */
+
+  bool removeTIBFromTickmarks_;  /*!< Flag for removing the tickmarks from TIB detector. */
+  bool removeTIDFromTickmarks_;  /*!< Flag for removing the tickmarks from TID detector. */
+  bool removeTOBFromTickmarks_;  /*!< Flag for removing the tickmarks from TOB detector. */
+  bool removeTECFromTickmarks_;  /*!< Flag for removing the tickmarks from TEC detector. */
+
+  bool removeTIBFromNoise_;      /*!< Flag for removing the noise from TIB detector. */
+  bool removeTIDFromNoise_;      /*!< Flag for removing the noise from TID detector. */
+  bool removeTOBFromNoise_;      /*!< Flag for removing the noise from TOB detector. */
+  bool removeTECFromNoise_;      /*!< Flag for removing the noise from TEC detector. */
 
 
   TH1F* h_tickmark_height_0;     /*!< Histogram storing the tickmark heights with AOH gain == 0. */
@@ -388,6 +379,31 @@ class SiStripApvGainFromFileBuilder : public edm::EDAnalyzer {
   /** Brief Check if AOH gain setting is correct.
    */
   inline bool is_aoh_gain_ok(float tickmark_height, int aoh_gain) const;
+
+  /** Brief Write the detector topology.
+   */
+  inline std::string detector_topology(uint32_t det_id) const;
+
+  /** Brief Check is det_id belogs to TIB.
+   */
+  inline bool is_TIB(uint32_t det_id) const;
+
+  /** Brief Check is det_id belogs to TID.
+   */
+  inline bool is_TID(uint32_t det_id) const;
+
+  /** Brief Check is det_id belogs to TOB.
+   */
+  inline bool is_TOB(uint32_t det_id) const;
+
+  /** Brief Check is det_id belogs to TEC.
+   */
+  inline bool is_TEC(uint32_t det_id) const;
+
+  /** Brief Build Filter Mask.
+   */
+  inline uint8_t filter_mask(bool tib, bool tid, bool tob, bool tec) const; 
+ 
 };
 
 inline bool
@@ -428,6 +444,39 @@ SiStripApvGainFromFileBuilder::rescale_tickmark(float tickmark_height, int aoh_g
   rescaled_tickmark = (g_ratio[new_aoh_gain]/g_ratio[aoh_gain])*tickmark_height;
 
   return true;
+}
+
+inline std::string
+SiStripApvGainFromFileBuilder::detector_topology(uint32_t det_id) const {
+  int subDetId = ((det_id>>25)&0x7);
+  std::stringstream out;
+  switch(subDetId){
+    case 3: //TIB
+    out << "TIB_L" << TIBDetId(det_id).layer();
+    return out.str();
+  case 4: //TID
+    out << "TID_W" << (-1*(2*(int)TIDDetId(det_id).side()-3)*(int)TIDDetId(det_id).wheel());
+    return out.str();
+  case 5: //TOB
+    out << "TOB_L" << TOBDetId(det_id).layer();
+    return out.str();
+  case 6: //TEC
+    out << "TEC_W" << (-1*(2*(int)TECDetId(det_id).side()-3)*(int)TECDetId(det_id).wheel());
+    return out.str();
+  }
+  return "";
+}
+
+inline bool SiStripApvGainFromFileBuilder::is_TIB(uint32_t det_id) const { return ( ((det_id>>25)&0x7)==3 ); }
+
+inline bool SiStripApvGainFromFileBuilder::is_TID(uint32_t det_id) const { return ( ((det_id>>25)&0x7)==4 ); }
+
+inline bool SiStripApvGainFromFileBuilder::is_TOB(uint32_t det_id) const { return ( ((det_id>>25)&0x7)==5 ); }
+
+inline bool SiStripApvGainFromFileBuilder::is_TEC(uint32_t det_id) const { return ( ((det_id>>25)&0x7)==6 ); }
+
+inline uint8_t SiStripApvGainFromFileBuilder::filter_mask(bool tib, bool tid, bool tob, bool tec) const {
+  return (tec<<3) | (tob<<2) | (tid<<1) | tib;
 }
 
 #endif
