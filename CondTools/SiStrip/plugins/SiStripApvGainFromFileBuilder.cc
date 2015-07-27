@@ -174,9 +174,9 @@ SiStripApvGainFromFileBuilder::endJob() {
     if (f==0)  continue;
 
     float a     = f->GetParameter(1);
-    float err_a = f->GetParError(1)*5.;
+    //float err_a = f->GetParError(1)*5.;
     float b     = f->GetParameter(0);
-    float err_b = f->GetParError(0)*5.;
+    //float err_b = f->GetParError(0)*5.;
 
     //checking the status of all the "bad" channels
     std::vector<Summary>::iterator s = summary_.begin();
@@ -186,11 +186,12 @@ SiStripApvGainFromFileBuilder::endJob() {
       float noiseFromTiming    = a*summary.gain_in_db +b;
       float noiseFromReference = a*(summary.reference_height/640.) +b;
 
-      bool difference_ok = summary.reference_height!=999999. && summary.noise>0. && summary.reference_noise>0.;
+      //bool difference_ok = summary.reference_height!=999999. && summary.noise>0. && summary.reference_noise>0.;
       //float noiseRatioM = summary.noise/summary.reference_noise;
       //float noiseRatioF = noiseFromTiming/noiseFromReference;
-      float noise_difference = (difference_ok)? std::fabs(noiseFromReference - summary.reference_noise) : 0;
-      float tolerance   = 2.*(std::fabs(err_a*summary.gain_in_db) + std::fabs(err_b));
+
+     // float noise_difference = (difference_ok)? std::fabs(noiseFromReference - summary.reference_noise) : 0;
+     // float tolerance   = 2.*(std::fabs(err_a*summary.gain_in_db) + std::fabs(err_b));
 
       bool correctDetType = ( summary.det_type==i );
 
@@ -217,7 +218,7 @@ SiStripApvGainFromFileBuilder::endJob() {
             summary.status_wrt_previous_run = '-';
           }
           s++;
-      } else if ( correctDetType && summary.tickmark_status=='V' && noise_difference>tolerance ) {
+      } else if ( correctDetType && summary.tickmark_status=='V') { // && noise_difference>tolerance ) {
         
         // nothing to do, discrepancy with reference is more than 5%, keep eyes open
         float noise_diff = std::fabs( (std::fabs(noiseFromTiming)-summary.noise) );
@@ -1113,22 +1114,22 @@ void SiStripApvGainFromFileBuilder::output_topology_maps() const {
       Summary s = summary_[i];
       int APV_pairIndex = (s.offlineAPV_id<=5)? s.offlineAPV_id/2 : 0;
       std::pair<uint32_t,float> p = std::pair<uint32_t,float>(s.det_id,s.tickmark_height);
-      if ( (!s.is_connected) && (s.is_scanned) )          UNC[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='B' && s.is_connected) BAD[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='V' )                  TBC[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='E' )                  EXT[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='N' )                  NSY[APV_pairIndex].insert( p );
+      if ( (!s.is_connected) && (s.is_scanned) )                  UNC[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='B' && s.is_connected)         BAD[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='V' || s.tickmark_status=='W') TBC[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='E' )                          EXT[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='N' )                          NSY[APV_pairIndex].insert( p );
     }
 
     for(unsigned int i=0; i<ex_summary_.size(); i++) {
       Summary s = ex_summary_[i];
       int APV_pairIndex = (s.offlineAPV_id<=5)? s.offlineAPV_id/2 : 0;
       std::pair<uint32_t,float> p = std::pair<uint32_t,float>(s.det_id,s.tickmark_height);
-      if ( (!s.is_connected) && (s.is_scanned) )          UNC[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='B' && s.is_connected) BAD[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='V' )                  TBC[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='E' )                  EXT[APV_pairIndex].insert( p );
-      else if ( s.tickmark_status=='N' )                  NSY[APV_pairIndex].insert( p );
+      if ( (!s.is_connected) && (s.is_scanned) )                   UNC[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='B' && s.is_connected)          BAD[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='V' || s.tickmark_status=='W')  TBC[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='E' )                           EXT[APV_pairIndex].insert( p );
+      else if ( s.tickmark_status=='N' )                           NSY[APV_pairIndex].insert( p );
     }
 
     // dump the set content into the output files
@@ -1548,11 +1549,17 @@ SiStripApvGainFromFileBuilder::set_tickmark_status(Summary& summary) const {
       float height_ratio = summary.tickmark_height/summary.reference_height;
       float noise_ratio  = (summary.noise>0. && summary.reference_noise>0. )? summary.noise/summary.reference_noise : 1.;
 
+      float signal_variation = std::fabs( 1-height_ratio );
+      float noise_variation  = std::fabs( 1-noise_ratio );
+      float S_over_N_variation = std::fabs( (1-height_ratio*(1./noise_ratio) ) ); 
+
       // check for channels with tickmark variation bigger than 5% w.r.t. reference
-      if ( std::fabs(1.-height_ratio)>0.05 ) {
-        summary.tickmark_status = 'V';
-      } else if ( std::fabs(1-noise_ratio)>0.05 ) {
-        summary.tickmark_status = 'W';
+      if ( S_over_N_variation>0.05 ) {
+        if ( signal_variation>noise_variation ) {
+          summary.tickmark_status = 'V';
+        } else {
+          summary.tickmark_status = 'W';
+        }
       }
     } else {
       //summary.recovery_status = 'U';
