@@ -62,3 +62,6 @@ DEFINE_FWK_MODULE(SiStripSummaryBuilder);
 
 #include "CondTools/SiStrip/plugins/SiStripApvGainFromFileBuilder.h"
 DEFINE_FWK_MODULE(SiStripApvGainFromFileBuilder);
+
+#include "CondTools/SiStrip/plugins/SiStripLorentzAngleFromGainTree.h"
+DEFINE_FWK_MODULE(SiStripLorentzAngleFromGainTree);
