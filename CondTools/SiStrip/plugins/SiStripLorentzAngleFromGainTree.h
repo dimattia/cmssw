@@ -27,6 +27,7 @@
 #include <stdint.h>
 
 
+class TrackerGeometry;
 class SiStripDetCabling;
 class SiStripDetInfoFileReader;
 class TH2F;
@@ -44,6 +45,8 @@ class SiStripLorentzAngleFromGainTree : public edm::EDAnalyzer {
                    uint16_t  nAPVs;
                    uint16_t  offlineAPV_id;
                    uint16_t  sensor;
+
+                   int       localFrame;
                    
                    int       FED_id;
                    int       FED_ch;
@@ -63,6 +66,8 @@ class SiStripLorentzAngleFromGainTree : public edm::EDAnalyzer {
                      nAPVs  = 0xffff;
                      sensor = 0xffff;
 
+                     localFrame = 0;
+
                      FED_id    = -1;
                      FED_ch    = -1;
                      i2cAdd    = -1;
@@ -77,6 +82,10 @@ class SiStripLorentzAngleFromGainTree : public edm::EDAnalyzer {
                      strip_length = 0.;
                    }
 
+                   /** Brief Checks if SiStripGeometry is filled.
+                    */
+                   bool isDummy() { return det_id==0xffffffff; }  
+
                    /** Brief Returns the detector type.
                     */
                    void whoIam( int& subdetector , int& structure ) { 
@@ -84,17 +93,17 @@ class SiStripLorentzAngleFromGainTree : public edm::EDAnalyzer {
                      else if( isTID(det_id) ) subdetector = TID;
                      else if( isTOB(det_id) ) subdetector = TOB;
                      else if( isTEC(det_id) ) subdetector = TEC;  
-                     else subdetector = ALL;
+                     else subdetector = UNKNOWN;
 
-                     structure = subdetectorStructure( det_id );
+                     structure = subdetectorStructure( );
                    }
 
                    /** Brief: Returns the name of the sensor type
                     */
                    std::string sensorType(uint16_t Sensor) {
-                     std::string types[15] = {"IB1","IB2","OB1","OB2","W1A","W2A","W3A","W1B","W2B","W3B","W4","W5","W6","W7",
-                                              "UNKNOWN"};
-                     if ( Sensor>14 ) return types[14];
+                     std::string types[15] = {"UNKNOWN",
+                                              "IB1","IB2","OB1","OB2","W1A","W2A","W3A","W1B","W2B","W3B","W4","W5","W6","W7"};
+                     if ( Sensor>15 ) return types[0];
                      return types[Sensor];
                    }
 
@@ -125,42 +134,70 @@ class SiStripLorentzAngleFromGainTree : public edm::EDAnalyzer {
 
                    /** Brief Return the subdetector structure (Layer or Wheel).
                     */
-                   int subdetectorStructure(uint32_t DetId) { 
-                     if( isTIB(DetId) )      return TIBDetId( DetId ).layer();
-                     else if( isTID(DetId) ) return (-1*(2*(int)TIDDetId( DetId ).side()-3)*
-                                                            (int)TIDDetId( DetId ).wheel());
-                     else if( isTOB(DetId) ) return TOBDetId( DetId ).layer();
-                     else if( isTEC(DetId) ) return (-1*(2*(int)TECDetId( DetId ).side()-3)*
-                                                            (int)TECDetId( DetId ).wheel());
+                   int subdetectorStructure() { 
+                     if (isDummy()) return 0;
+
+                     int st = 0;
+                     if( isTIB(det_id) )      st = TIBDetId( det_id ).layer(); 
+                     else if( isTID(det_id) ) st = -1*(2*(int)TIDDetId( det_id ).side()-3)*(int)TIDDetId( det_id ).wheel();
+                     else if( isTOB(det_id) ) st = TOBDetId( det_id ).layer();
+                     else if( isTEC(det_id) ) st = -1*(2*(int)TECDetId( det_id ).side()-3)*(int)TECDetId( det_id ).wheel();
+
+                     int sgn = (st<0.)? -1 : 1;
+
+                     return  st + sgn*localFrame*100;
+                   }
+
+                   /** Brief Check if the subdetector module is in positive side.
+                    */ 
+                   bool isZPlusSide(uint32_t DetId) {
+                     if( isTIB(DetId) )      return TIBDetId( DetId ).isZPlusSide();
+                     else if( isTID(DetId) ) return TIDDetId( DetId ).isZPlusSide();
+                     else if( isTOB(DetId) ) return TOBDetId( DetId ).isZPlusSide();
+                     else if( isTEC(DetId) ) return TECDetId( DetId ).isZPlusSide();
                      return 0;
                    }
 
+                   /** Brief Check if the subdetector module is in positive side.
+                    */
+                   bool isZMinusSide(uint32_t DetId) {
+                     if( isTIB(DetId) )      return TIBDetId( DetId ).isZMinusSide();
+                     else if( isTID(DetId) ) return TIDDetId( DetId ).isZMinusSide();
+                     else if( isTOB(DetId) ) return TOBDetId( DetId ).isZMinusSide();
+                     else if( isTEC(DetId) ) return TECDetId( DetId ).isZMinusSide();
+                     return 0;
+                   }
+
+
                    /** Brief Return a string tag
                     */
-                   std::string subdetectorType(uint32_t DetId) {
-                     int subDetId = ((DetId>>25)&0x7);
-                     int subStrId = subdetectorStructure(DetId);
+                   std::string subdetectorType() {
+                     if(isDummy()) return "";
+
+                     int subDetId = ((det_id>>25)&0x7);
+                     int subStrId = ( (int)std::fabs( subdetectorStructure() )) % 100;
+                     bool negativeSide = isZMinusSide(det_id);
                      std::stringstream out;
 
                      switch(subDetId){
                      case 3: //TIB
-                       out << "TIB_layer" << subStrId;
-                       return out.str();
+                       out << "TIB_layer" << subStrId << "_noSide";
                        break;
                      case 4: //TID
-                       out << ( (subStrId<0)? "TID_negativeSide_wheel" : "TID_positiveSide_wheel" ) << std::fabs(subStrId);
-                       return out.str();
+                       out << "TID_wheel" << subStrId;
+                       out << ( (negativeSide)? "_negativeSide" : "_positiveSide" );
                        break;
                      case 5: //TOB
-                       out << "TOB_layer" << subStrId;
-                       return out.str();
+                       out << "TOB_layer" << subStrId << "_noSide";
                        break;
                      case 6: //TEC
-                       out << ( (subStrId<0)? "TEC_negativeSide_wheel" : "TEC_positiveSide_wheel" ) << std::fabs(subStrId);
-                       return out.str();
+                       out << "TEC_wheel" << subStrId;
+                       out << ( (negativeSide)? "_negativeSide" : "_positiveSide" );
                        break;
                      }
-                     return "";
+
+                     out << "_frame" << localFrame ;
+                     return out.str();
                    }  
 
                  };
@@ -185,7 +222,9 @@ class SiStripLorentzAngleFromGainTree : public edm::EDAnalyzer {
 
     /** Brief Initialize the geometry and cabling map.
      */  
-    void initialize(SiStripDetInfoFileReader& reader, edm::ESHandle<SiStripDetCabling>& cabling);
+    void initialize(SiStripDetInfoFileReader& reader, 
+                    edm::ESHandle<SiStripDetCabling>& cabling,
+                    edm::ESHandle<TrackerGeometry>& tkGeometry);
 
 
     private:
@@ -224,20 +263,28 @@ class SiStripLorentzAngleFromGainTree : public edm::EDAnalyzer {
 
  private:
   struct DetectorHistograms {
-           int substructure;
+           std::vector<int> substructure;
            std::vector<TH2F*> h_angle_vs_amplitude; /*!< cluster amplitude versus track angle. */
          };
 
-  edm::FileInPath gfp_;                          /*!< File Path for the ideal geometry. */
-  std::vector<std::string> gainTreeList_;        /*!< List of calibration tree to be processed. */
+  edm::FileInPath gfp_;                             /*!< File Path for the ideal geometry. */
+  std::vector<std::string> gainTreeList_;           /*!< List of calibration tree to be processed. */
 
-  TChain* calibData_;                            /*!< Contains the chained input calibration ntuple. */
+  TChain* calibData_;                               /*!< Contains the chained input calibration ntuple. */
 
-  TH2F* h_angle_vs_amplitude[14];                /*!< amplitude versus track angle per sensor type. */
-  std::vector<DetectorHistograms> siStripHitos_; /*!< histogram per detector type. */
+  TH2F* h_angle_vs_amplitude[14];                   /*!< amplitude versus track angle per sensor type. */
+  std::vector<DetectorHistograms> siStripHistos_;   /*!< histogram per detector type. */
 
-  edm::ESHandle<SiStripDetCabling> detCabling_;  /*!< Handle of SiStrip cabling retrieved from the eventSetup. */
-  DetectorSetup siStripSetup_;                   /*!< Describes the SiStrip geometry and cabling setup. */
+  edm::ESHandle<SiStripDetCabling> detCabling_;     /*!< Handles the SiStrip cabling retrieved from the eventSetup. */
+  edm::ESHandle<TrackerGeometry> tkGeometry_;       /*!< Handles the tracker geometry retrieved fromm the eventSetup. */
+  DetectorSetup siStripSetup_;                      /*!< Describes the SiStrip geometry and cabling setup. */
+
+  std::vector<uint32_t>* moduleId_;                 /*!< Detector Id from gain calibration ntuple. */
+  std::vector<float>* localDirX_;                   /*!< Track direction along X from gain calibration ntuple. */
+  std::vector<float>* localDirY_;                   /*!< Track direction along Y from gain calibration ntuple. */
+  std::vector<float>* localDirZ_;                   /*!< Track direction along Z from gain calibration ntuple. */
+  std::vector<unsigned short>* firstStrip_;         /*!< Index of the first strip in the cluster. */
+  std::vector<unsigned short>* clusterWidth_;       /*!< Cluster amplitude from gain calibration ntuple. */
 };
 
 #endif
