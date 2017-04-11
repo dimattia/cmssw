@@ -27,6 +27,8 @@
 #include "CalibTracker/SiStripCommon/interface/SiStripDetInfoFileReader.h"
 
 #include "boost/cstdint.hpp"
+#include <map>
+#include <utility>
 #include <vector>
 #include <string>
 #include <typeinfo>
@@ -118,7 +120,8 @@ class SiStripCondObjBuilderFromDb {
  
   //methods used by BuildStripRelatedObjects
   bool setValuesApvLatency(SiStripLatency & latency_, SiStripConfigDb* const db, FedChannelConnection &ipair, uint32_t detid, uint16_t apvnr, SiStripConfigDb::DeviceDescriptionsRange apvs);
-  bool setValuesApvTiming(SiStripConfigDb* const db, FedChannelConnection &ipair);
+  bool setValuesApvTiming(SiStripConfigDb* const db, FedChannelConnection &ipair, 
+                          SiStripApvGain::InputVector& inputChGain, uint32_t APVpair);
   //  bool setValuesCabling(SiStripConfigDb* const db, FedChannelConnection &ipair, uint32_t detid);
   bool setValuesCabling(SiStripConfigDb::FedDescriptionsRange &descriptions, FedChannelConnection &ipair, uint32_t detid);
   bool retrieveFedDescriptions(SiStripConfigDb* const db);
@@ -129,16 +132,16 @@ class SiStripCondObjBuilderFromDb {
  
   //set and store data
   void setDefaultValuesCabling(uint16_t apvPair);
-  void setDefaultValuesApvTiming();
   void setDefaultValuesApvLatency(SiStripLatency & latency_, const FedChannelConnection& ipair, uint32_t detid, uint16_t apvnr);
   void storePedestals(uint32_t det_id);
   void storeNoise(uint32_t det_id);
   void storeThreshold(uint32_t det_id);
   void storeQuality(uint32_t det_id);
-  void storeTiming(uint32_t det_id);
+  void storeTiming();
   
   
   // cfi input parameters
+  edm::FileInPath m_geometryFile;     /*!< path for the file describing the geometry. */
   float m_gaincalibrationfactor;
   float m_defaultpedestalvalue;
   float m_defaultnoisevalue;
@@ -158,7 +161,7 @@ class SiStripCondObjBuilderFromDb {
   SiStripNoises::InputVector inputNoises;
   SiStripThreshold::InputVector inputThreshold;
   SiStripQuality::InputVector inputQuality;
-  SiStripApvGain::InputVector inputApvGain;
+  std::map<uint32_t,SiStripApvGain::InputVector> inputApvGain;
   
 
   // Tracker Cabling objects

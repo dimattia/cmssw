@@ -31,7 +31,9 @@ using namespace sistrip;
 /** */
 SiStripCondObjBuilderFromDb::SiStripCondObjBuilderFromDb(const edm::ParameterSet& pset,
 							 const edm::ActivityRegistry&):
-  m_gaincalibrationfactor(static_cast<float>(pset.getUntrackedParameter<double>("GainNormalizationFactor",690.))), 
+  m_geometryFile(static_cast<edm::FileInPath>(pset.getUntrackedParameter<edm::FileInPath>("geoFile",
+                                               edm::FileInPath("CalibTracker/SiStripCommon/data/SiStripDetInfo.dat")))),
+  m_gaincalibrationfactor(static_cast<float>(pset.getUntrackedParameter<double>("GainNormalizationFactor",640.))), 
   m_defaultpedestalvalue(static_cast<float>(pset.getUntrackedParameter<double>("DefaultPedestal",0.))), 
   m_defaultnoisevalue(static_cast<float>(pset.getUntrackedParameter<double>("DefaultNoise",0.))), 
   m_defaultthresholdhighvalue(static_cast<float>(pset.getUntrackedParameter<double>("DefaultThresholdHigh",0.))), 
@@ -357,13 +359,6 @@ void SiStripCondObjBuilderFromDb::setDefaultValuesCabling(uint16_t apvPair){
 
 // -----------------------------------------------------------------------------
 /** */
-void SiStripCondObjBuilderFromDb::setDefaultValuesApvTiming(){
-  inputApvGain.push_back(m_defaulttickheightvalue/m_gaincalibrationfactor); // APV0
-  inputApvGain.push_back(m_defaulttickheightvalue/m_gaincalibrationfactor); // APV1
-}
-
-// -----------------------------------------------------------------------------
-/** */
 void SiStripCondObjBuilderFromDb::setDefaultValuesApvLatency(SiStripLatency & latency_, const FedChannelConnection& ipair, uint32_t detid, uint16_t apvnr){
   std::cout << "[SiStripCondObjBuilderFromDb::"<<__func__<<"]: Set Default Latency for Detid: " << detid << " ApvNr: " << apvnr << std::endl;
   if(!latency_.put( detid, apvnr, m_defaultapvmodevalue, m_defaultapvlatencyvalue))
@@ -381,10 +376,12 @@ void SiStripCondObjBuilderFromDb::setDefaultValuesApvLatency(SiStripLatency & la
 
 // -----------------------------------------------------------------------------
 /** */
-bool SiStripCondObjBuilderFromDb::setValuesApvTiming(SiStripConfigDb* const db, FedChannelConnection &ipair){
+bool SiStripCondObjBuilderFromDb::setValuesApvTiming(SiStripConfigDb* const db, FedChannelConnection &ipair,
+                                                     SiStripApvGain::InputVector& inputChGain, uint32_t APVpair)
+{
   SiStripConfigDb::AnalysisDescriptionsRange anal_descriptions = db->getAnalysisDescriptions( CommissioningAnalysisDescription::T_ANALYSIS_TIMING );
-   SiStripConfigDb::AnalysisDescriptionsV::const_iterator iii = anal_descriptions.begin();
-  SiStripConfigDb::AnalysisDescriptionsV::const_iterator jjj = anal_descriptions.end();
+   SiStripConfigDb::AnalysisDescriptionsV::const_iterator iii  = anal_descriptions.begin();
+  SiStripConfigDb::AnalysisDescriptionsV::const_iterator jjj   = anal_descriptions.end();
  
   while ( iii != jjj ) {
     CommissioningAnalysisDescription* tmp = *iii;
@@ -398,11 +395,10 @@ bool SiStripCondObjBuilderFromDb::setValuesApvTiming(SiStripConfigDb* const db, 
   if ( iii != jjj ) { anal = dynamic_cast<TimingAnalysisDescription*>(*iii); }
   if ( anal ) {
     float tick_height = (anal->getHeight() / m_gaincalibrationfactor);
-    inputApvGain.push_back( tick_height ); // APV0
-    inputApvGain.push_back( tick_height); // APV1
+    inputChGain.at(APVpair*2)   = tick_height;   // APV0
+    inputChGain.at(APVpair*2+1) = tick_height;   // APV1
   } else {
-    inputApvGain.push_back(m_defaulttickheightvalue/m_gaincalibrationfactor); // APV0
-    inputApvGain.push_back(m_defaulttickheightvalue/m_gaincalibrationfactor); // APV1
+    //deafult values already inserted
     return false;
   }
 
@@ -557,16 +553,20 @@ void SiStripCondObjBuilderFromDb::storeQuality(uint32_t det_id){
 
 // -----------------------------------------------------------------------------
 /** */
-void SiStripCondObjBuilderFromDb::storeTiming(uint32_t det_id){
+void SiStripCondObjBuilderFromDb::storeTiming(){
   // Insert tick height values into Gain object
-      SiStripApvGain::Range range( inputApvGain.begin(), inputApvGain.end() );
-      if ( !gain_->put( det_id, range ) ) {
-	edm::LogWarning(mlESSources_)
-	  << "[SiStripCondObjBuilderFromDb::" << __func__ << "]"
-	  << " Unable to insert values into SiStripApvGain object!"
-	  << " DetId already exists!";
-      }
-      inputApvGain.clear();
+  std::map<uint32_t,SiStripApvGain::InputVector>::iterator it;
+  for (it=inputApvGain.begin();it!=inputApvGain.end();++it) {
+    uint32_t det_id = (*it).first;
+    SiStripApvGain::Range range( (*it).second.begin(), (*it).second.end() );
+    if ( !gain_->put( det_id, range ) ) {
+      edm::LogWarning(mlESSources_)
+          << "[SiStripCondObjBuilderFromDb::" << __func__ << "]"
+          << " Unable to insert values into SiStripApvGain object!"
+          << " DetId already exists!";
+    }
+  }
+  inputApvGain.clear();
 }
 
 // -----------------------------------------------------------------------------
@@ -671,15 +671,43 @@ void SiStripCondObjBuilderFromDb::buildAnalysisRelatedObjects( SiStripConfigDb* 
   //data container
   gain_= new SiStripApvGain();
 
+  // Use ideal geometry to build a dummy map
+  SiStripDetInfoFileReader * fr=edm::Service<SiStripDetInfoFileReader>().operator->();
+  const std::map<uint32_t, SiStripDetInfoFileReader::DetInfo > DetInfos  = fr->getAllData();
+  std::map<uint32_t, SiStripDetInfoFileReader::DetInfo >::const_iterator it;
+
+  float dummy = m_defaulttickheightvalue/m_gaincalibrationfactor;
+  for(it = DetInfos.begin(); it != DetInfos.end(); it++){ 
+
+    // check if det id is correct and if it is actually cabled in the detector
+    if( it->first==0 || it->first==0xFFFFFFFF ) {
+      edm::LogError("DetIdNotGood") << "@SUB=analyze" << "Wrong det id: " << it->first
+                                    << "  ... neglecting!" << std::endl;
+      continue;
+    }
+
+    // store det_ids into dummy map
+    uint32_t id = it->first;
+    int nAPVs   = it->second.nApvs;
+    SiStripApvGain::InputVector v = SiStripApvGain::InputVector(nAPVs,dummy);
+    std::pair<std::map<uint32_t,SiStripApvGain::InputVector>::iterator,bool>
+      r = inputApvGain.insert(std::make_pair(id,v));
+    if (r.second==false) {
+      edm::LogError(mlESSources_) << "[SiStripCondObjBuilderFromDb::" << __func__ << "]"
+                        << " Unable to store det_id " << id << " in dummy map! QUIT";
+      storeTiming();
+      return;
+    }
+  }
+
   //check if Timing analysis description is found, otherwise quit
   if(!retrieveTimingAnalysisDescriptions(&*db_)){
     edm::LogWarning(mlESSources_)
       << "[SiStripCondObjBuilderFromDb::" << __func__ << "]"
       << " NULL pointer to AnalysisDescriptions returned by SiStripConfigDb!"
       << " Cannot build Analysis object! QUIT";
-    // some values have to be set, otherwise PopCon will crash
-    setDefaultValuesApvTiming();
-    storeTiming(4711);
+    // output the dummy map
+    storeTiming();
     return;
   }
 
@@ -688,6 +716,18 @@ void SiStripCondObjBuilderFromDb::buildAnalysisRelatedObjects( SiStripConfigDb* 
   //loop detids
   for(i_trackercon detids=tc.begin();detids!=detids_end;detids++){
     uint32_t detid = (*detids).first;
+
+    // retrieve input channel gains
+    std::map<uint32_t,SiStripApvGain::InputVector>::iterator el = inputApvGain.find(detid);
+    if (el==inputApvGain.end()) {
+      edm::LogError(mlESSources_) << "[SiStripCondObjBuilderFromDb::" << __func__ << "]"
+                        << " Unable to retrieve det_id " << detid << " in dummy map! QUIT";
+      storeTiming();
+      return;
+    }
+    SiStripApvGain::InputVector& channelGains = (*el).second;
+    
+
     i_apvpairconn connections_end=((*detids).second).end();
     
     //loop connections
@@ -698,22 +738,21 @@ void SiStripCondObjBuilderFromDb::buildAnalysisRelatedObjects( SiStripConfigDb* 
           
       //no connection for apvPair found
       if(apvPair>=100){
-	setDefaultValuesApvTiming();  
+	//default values already inserted  
 	continue;
       }
       
       //fill data
-      if(!setValuesApvTiming(db, ipair)){
- 	std::cout
- 	  << "\n "
- 	  << " Unable to find Timing Analysis Description"
- 	  << " Writing default values for DetId: " << detid
- 	  << " Value: " << m_defaulttickheightvalue/m_gaincalibrationfactor << std::endl;
- 	setDefaultValuesApvTiming();
+      if(!setValuesApvTiming(db, ipair,channelGains,apvPair)){
+        edm::LogWarning(mlESSources_) << "[SiStripCondObjBuilderFromDb::" << __func__ << "]"
+                        << " Unable to find Timing Analysis Description"
+                        << " Left default values for DetId: " << detid;
       }
+
+      // tickmark recovery using with existing gain payload
     }//connections
-    storeTiming(detid);
   }//detids
+  storeTiming();
 
 }
  
