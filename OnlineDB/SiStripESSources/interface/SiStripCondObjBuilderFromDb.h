@@ -141,7 +141,7 @@ class SiStripCondObjBuilderFromDb {
   
   
   // cfi input parameters
-  edm::FileInPath m_geometryFile;     /*!< path for the file describing the geometry. */
+  float m_tickmarkThreshold;          /*!< threshold to accept the tickmark measurement. */
   float m_gaincalibrationfactor;
   float m_defaultpedestalvalue;
   float m_defaultnoisevalue;

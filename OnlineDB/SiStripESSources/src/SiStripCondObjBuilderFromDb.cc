@@ -31,8 +31,7 @@ using namespace sistrip;
 /** */
 SiStripCondObjBuilderFromDb::SiStripCondObjBuilderFromDb(const edm::ParameterSet& pset,
 							 const edm::ActivityRegistry&):
-  m_geometryFile(static_cast<edm::FileInPath>(pset.getUntrackedParameter<edm::FileInPath>("geoFile",
-                                               edm::FileInPath("CalibTracker/SiStripCommon/data/SiStripDetInfo.dat")))),
+  m_tickmarkThreshold(static_cast<float>(pset.getUntrackedParameter<double>("TickmarkThreshold",50.))),
   m_gaincalibrationfactor(static_cast<float>(pset.getUntrackedParameter<double>("GainNormalizationFactor",640.))), 
   m_defaultpedestalvalue(static_cast<float>(pset.getUntrackedParameter<double>("DefaultPedestal",0.))), 
   m_defaultnoisevalue(static_cast<float>(pset.getUntrackedParameter<double>("DefaultNoise",0.))), 
@@ -393,7 +392,7 @@ bool SiStripCondObjBuilderFromDb::setValuesApvTiming(SiStripConfigDb* const db, 
   
   TimingAnalysisDescription *anal=0;
   if ( iii != jjj ) { anal = dynamic_cast<TimingAnalysisDescription*>(*iii); }
-  if ( anal ) {
+  if ( anal && anal->getHeight() > m_tickmarkThreshold ) {
     float tick_height = (anal->getHeight() / m_gaincalibrationfactor);
     inputChGain.at(APVpair*2)   = tick_height;   // APV0
     inputChGain.at(APVpair*2+1) = tick_height;   // APV1
