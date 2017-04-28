@@ -46,6 +46,11 @@
 #include "DataFormats/SiStripDetId/interface/StripSubdetector.h"
 #include "DataFormats/TrackReco/interface/DeDxHit.h"
 #include "DataFormats/TrackReco/interface/TrackDeDxHits.h"
+#include "DataFormats/SiStripDetId/interface/TIBDetId.h"
+#include "DataFormats/SiStripDetId/interface/TOBDetId.h"
+#include "DataFormats/SiStripDetId/interface/TIDDetId.h"
+#include "DataFormats/SiStripDetId/interface/TECDetId.h"
+
 
 #include "CommonTools/ConditionDBWriter/interface/ConditionDBWriter.h"
 #include "CondFormats/SiStripObjects/interface/SiStripApvGain.h"
@@ -77,6 +82,7 @@
 #include "TChain.h"
 
 #include <ext/hash_map>
+#include <algorithm>
 
 
 
@@ -88,33 +94,159 @@ using __gnu_cxx::hash_map;
 using __gnu_cxx::hash;
 
 struct stAPVGain{
-  unsigned int Index; 
-  int          Bin;
-  unsigned int DetId;
-  unsigned int APVId;
-  unsigned int SubDet;
-  float        x;
-  float        y;
-  float        z;
-  float        Eta;
-  float        R;
-  float        Phi;
-  float        Thickness;
-  double       FitMPV;
-  double       FitMPVErr;
-  double       FitWidth;
-  double       FitWidthErr;
-  double       FitChi2;
-  double       FitNorm;
-  double       Gain;
-  double       CalibGain;
-  double       PreviousGain;
-  double       PreviousGainTick;
-  double       NEntries;
-  TH1F*        HCharge;
-  TH1F*        HChargeN;
-  bool         isMasked;
+	unsigned int Index; 
+	int          Bin;
+	unsigned int DetId;
+	unsigned int APVId;
+	unsigned int SubDet;
+	float        x;
+	float        y;
+	float        z;
+	float 	Eta;
+	float 	R;
+	float 	Phi;
+	float  	Thickness;
+	double 	FitMPV;
+	double 	FitMPVErr;
+	double 	FitWidth;
+	double 	FitWidthErr;
+	double 	FitChi2;
+	double 	FitNorm;
+	double 	Gain;
+	double  CalibGain;
+	double 	PreviousGain;
+	double 	PreviousGainTick;
+	double 	NEntries;
+	TH1F*	HCharge;
+	TH1F*   HChargeN;
+	bool    isMasked;
 };
+
+/** Brief Extract from the DetId the subdetector type.
+ * Return an integer which is associated to the subdetector type. The integer
+ * coding follows:
+ *
+ *  3 - TIB
+ *  4 - TID
+ *  5 - TOB
+ *  6 - TEC
+ */ 
+int subdetectorId(uint32_t det_id) {
+    return (det_id >> 25)&0x7;
+};
+
+/** Brief Extract from a char * the subdetector type.
+ * Return an integer whioch is associated to the subdetector type. The integer
+ * coding follows:
+ *
+ * 3 - TIB
+ * 4 - TID
+ * 5 - TOB
+ * 6 - TEC
+ *
+ * The char * string is expected to have a 3 char descriptor of the subdetector
+ * type in front.
+ */ 
+int subdetectorId(const char* tag) {
+    std::string d = std::string(tag).substr(0,3);
+    if ( d.compare("TIB")==0 ) return 3;
+    if ( d.compare("TID")==0 ) return 4;
+    if ( d.compare("TOB")==0 ) return 5;
+    if ( d.compare("TEC")==0 ) return 6;
+    return 0;
+};
+
+/** Brief Extract the subdetector side from the Det Id
+ * Return and integer whose coding is
+ *   0 - no side description can be applied
+ *   1 - for negative side
+ *   2 - for positive side
+ */
+int subdetectorSide(uint32_t det_id) {
+    int id = subdetectorId(det_id);
+    if (id==4) return (int)TIDDetId( det_id ).side();
+    if (id==6) return (int)TECDetId( det_id ).side();
+    return 0;
+}
+
+/** Brief Extract the subdetector side from a char * descriptor
+ * Return and integer whose coding is
+ *   0 - no side description can be applied
+ *   1 - for negative side
+ *   2 - for positive side
+ *
+ *   The char * descriptor is expected to have either "minus" or "plus"
+ *   string to specify the sign. If no sign spec is found 0 is returned.
+ */
+int subdetectorSide(const char* tag) {
+    std::string t = std::string(tag);
+    std::size_t m = t.find("minus");
+    std::size_t p = t.find("plus");
+    if (m!=std::string::npos) return 1;
+    if (p!=std::string::npos) return 2;
+    return 0;
+}
+
+
+
+/** Brief Extract the detector plane position from a DetId.
+ * Return an integer that represent the detector plane where the module sits.
+ * For the barrel detectors (TIB and TOB) the detector plane is the layer, e.g.
+ * ranging from 1 to 4 in the TIB and from 1 to 6 in the TOB. For the endcap 
+ * detectors the detector plane is the wheel number with a sign in front to 
+ * tell in which side the wheel is sitting.
+ */
+int subdetectorPlane(uint32_t det_id) {
+    if( subdetectorId(det_id)==3 )      return TIBDetId( det_id ).layer();
+    else if( subdetectorId(det_id)==4 ) return (2*(int)TIDDetId( det_id ).side()-3)*(int)TIDDetId( det_id ).wheel();
+    else if( subdetectorId(det_id)==5 ) return TOBDetId( det_id ).layer();
+    else if( subdetectorId(det_id)==6 ) return (2*(int)TECDetId( det_id ).side()-3)*(int)TECDetId( det_id ).wheel();
+    return 0;
+};
+
+/** Brief Extract from a char * the subdetector type.
+ * Return an integer whioch is the detector plane where the module sits.
+ * The char * string is expected to have the subdetector plane put at its
+ * end after an "_" char.
+ */ 
+int subdetectorPlane(const char* tag) {
+   std::string s = std::string(tag); 
+   std::size_t p = (s.find("layer")!=std::string::npos)? s.find("layer") : s.find("wheel");
+   if (p!=std::string::npos) {
+       std::size_t start = s.find("_",p+1) + 1;
+       std::size_t stop  = s.find('_',start);
+       std::string plane = s.substr(start,stop-start);
+       return atoi( plane.c_str());
+   }
+   return 0;
+};
+
+
+/** Brief Fetch the Monitor Element corresponding to a DetId.
+ */
+std::vector<MonitorElement*> FetchMonitor(std::vector<MonitorElement*> histos, uint32_t det_id) {
+    std::vector<MonitorElement*> found = std::vector<MonitorElement*>();
+    std::vector<MonitorElement*>::iterator it= histos.begin();
+    while (it!=histos.end()) {
+        std::string tag = (*it)->getName();
+        int sId    = subdetectorId((uint32_t)det_id);
+        int sPlane = subdetectorPlane((uint32_t)det_id);
+        int sSide  = subdetectorSide((uint32_t)det_id);
+
+        bool match = (subdetectorId(tag.c_str())==0 || subdetectorId(tag.c_str())==sId) &&
+                     (subdetectorPlane(tag.c_str())==0 || subdetectorPlane(tag.c_str())==sPlane) &&
+                     (subdetectorSide(tag.c_str())==0 ||subdetectorSide(tag.c_str())==sSide);
+        if (match) {
+            //std::cout << tag << ":  subdetector=" << sId << ", plane=" << sPlane << ", side=" << sSide << std::endl;
+            found.push_back(*it);
+        }
+        it++;
+    }
+    return found;
+}
+
+
+ 
 
 class SiStripGainFromCalibTree : public ConditionDBWriter<SiStripApvGain> {
 public:
@@ -145,6 +277,7 @@ private:
 	void getPeakOfLandau(TH1* InputHisto, double* FitResults, double LowRange=50, double HighRange=5400);
 	bool IsGoodLandauFit(double* FitResults); 
 	void storeOnTree(TFileService* tfs);
+        void qualityMonitor();
 	void MakeCalibrationMap();
 	bool produceTagFilter();
 
@@ -182,6 +315,7 @@ private:
 	bool         useCalibration;
         bool         m_harvestingMode;
         bool         m_splitDQMstat;
+        bool         doChargeMonitorPerPlane;
         string       m_calibrationMode;
 	string       m_calibrationPath;
         string       m_DQMdir;
@@ -192,12 +326,18 @@ private:
 	std::string  AlgoMode;
 	std::string  OutputGains;
 	vector<string> VInputFiles;
+        vector<string> VChargeHisto;           /*!< Charge monitor plots to be output */
 
         enum statistic_type {None=-1, StdBunch, StdBunch0T, FaABunch, FaABunch0T, IsoBunch, IsoBunch0T, Harvest};
 
         std::vector<string>    dqm_tag_;
 
-        std::vector<MonitorElement*>  Charge_Vs_Index;
+        std::vector<MonitorElement*>  Charge_Vs_Index;        /*!< Charge per cm for each detector id */
+        std::vector< std::vector<MonitorElement*> > Charge_1; /*!< Charge per cm per layer / wheel */
+        std::vector< std::vector<MonitorElement*> > Charge_2; /*!< Charge per cm per layer / wheel without G2 */
+        std::vector< std::vector<MonitorElement*> > Charge_3; /*!< Charge per cm per layer / wheel without G1 */
+        std::vector< std::vector<MonitorElement*> > Charge_4; /*!< Charge per cm per layer / wheel without G1 and G1*/
+        
         //std::vector<MonitorElement*>  Charge_Vs_Index_Absolute;
         std::vector<MonitorElement*>  Charge_Vs_PathlengthTIB;
         std::vector<MonitorElement*>  Charge_Vs_PathlengthTOB;
@@ -207,6 +347,50 @@ private:
         std::vector<MonitorElement*>  Charge_Vs_PathlengthTECP2;
         std::vector<MonitorElement*>  Charge_Vs_PathlengthTECM1;
         std::vector<MonitorElement*>  Charge_Vs_PathlengthTECM2;
+
+
+        //Validation histograms
+        MonitorElement* MPV_Vs_EtaTIB; //  = new TH2D("MPV_Vs_EtaTIB" ,"MPV_Vs_EtaTIB" , 50, -3.0, 3.0, 300, 0, 600);
+        MonitorElement* MPV_Vs_EtaTID; //  = new TH2D("MPV_Vs_EtaTID" ,"MPV_Vs_EtaTID" , 50, -3.0, 3.0, 300, 0, 600);
+        MonitorElement* MPV_Vs_EtaTOB; //  = new TH2D("MPV_Vs_EtaTOB" ,"MPV_Vs_EtaTOB" , 50, -3.0, 3.0, 300, 0, 600);
+        MonitorElement* MPV_Vs_EtaTEC; //  = new TH2D("MPV_Vs_EtaTEC" ,"MPV_Vs_EtaTEC" , 50, -3.0, 3.0, 300, 0, 600);
+        MonitorElement* MPV_Vs_EtaTEC1;// = new TH2D("MPV_Vs_EtaTEC1","MPV_Vs_EtaTEC1", 50, -3.0, 3.0, 300, 0, 600);
+        MonitorElement* MPV_Vs_EtaTEC2;// = new TH2D("MPV_Vs_EtaTEC2","MPV_Vs_EtaTEC2", 50, -3.0, 3.0, 300, 0, 600);
+
+        MonitorElement* MPV_Vs_PhiTIB; //  = new TH2D("MPV_Vs_PhiTIB" ,"MPV_Vs_PhiTIB" , 50, -3.4, 3.4, 300, 0, 600);
+        MonitorElement* MPV_Vs_PhiTID; //  = new TH2D("MPV_Vs_PhiTID" ,"MPV_Vs_PhiTID" , 50, -3.4, 3.4, 300, 0, 600);
+        MonitorElement* MPV_Vs_PhiTOB; //  = new TH2D("MPV_Vs_PhiTOB" ,"MPV_Vs_PhiTOB" , 50, -3.4, 3.4, 300, 0, 600);
+        MonitorElement* MPV_Vs_PhiTEC; //  = new TH2D("MPV_Vs_PhiTEC" ,"MPV_Vs_PhiTEC" , 50, -3.4, 3.4, 300, 0, 600);
+        MonitorElement* MPV_Vs_PhiTEC1;// = new TH2D("MPV_Vs_PhiTEC1","MPV_Vs_PhiTEC1", 50, -3.4, 3.4, 300, 0, 600);
+        MonitorElement* MPV_Vs_PhiTEC2;// = new TH2D("MPV_Vs_PhiTEC2","MPV_Vs_PhiTEC2", 50, -3.4, 3.4, 300, 0, 600);
+
+        MonitorElement* NoMPV;         // = new TH2D("NoMPV"         ,"NoMPV"         ,350, -350, 350, 240, 0, 120);
+
+        MonitorElement* Gains;         // = new TH1D("Gains"         ,"Gains"         ,                300, 0, 2);
+        MonitorElement* MPVs;          // = new TH1D("MPVs"          ,"MPVs"          ,                300, 0, 600);
+        MonitorElement* MPVs320;       // = new TH1D("MPVs320"       ,"MPVs320"       ,                300, 0, 600);
+        MonitorElement* MPVs500;       // = new TH1D("MPVs500"       ,"MPVs500"       ,                300, 0, 600);
+        MonitorElement* MPVsTIB;       // = new TH1D("MPVsTIB"       ,"MPVsTIB"       ,                300, 0, 600);
+        MonitorElement* MPVsTID;       // = new TH1D("MPVsTID"       ,"MPVsTID"       ,                300, 0, 600);
+        MonitorElement* MPVsTIDP;      // = new TH1D("MPVsTIDP"      ,"MPVsTIDP"      ,                300, 0, 600);
+        MonitorElement* MPVsTIDM;      // = new TH1D("MPVsTIDM"      ,"MPVsTIDM"      ,                300, 0, 600);
+        MonitorElement* MPVsTOB;       // = new TH1D("MPVsTOB"       ,"MPVsTOB"       ,                300, 0, 600);
+        MonitorElement* MPVsTEC;       // = new TH1D("MPVsTEC"       ,"MPVsTEC"       ,                300, 0, 600);
+        MonitorElement* MPVsTECP;      // = new TH1D("MPVsTECP"      ,"MPVsTECP"      ,                300, 0, 600);
+        MonitorElement* MPVsTECM;      // = new TH1D("MPVsTECM"      ,"MPVsTECM"      ,                300, 0, 600);
+        MonitorElement* MPVsTEC1;      // = new TH1D("MPVsTEC1"      ,"MPVsTEC1"      ,                300, 0, 600);
+        MonitorElement* MPVsTEC2;      // = new TH1D("MPVsTEC2"      ,"MPVsTEC2"      ,                300, 0, 600);
+        MonitorElement* MPVsTECP1;     // = new TH1D("MPVsTECP1"     ,"MPVsTECP1"     ,                300, 0, 600);
+        MonitorElement* MPVsTECP2;     // = new TH1D("MPVsTECP2"     ,"MPVsTECP2"     ,                300, 0, 600);
+        MonitorElement* MPVsTECM1;     // = new TH1D("MPVsTECM1"     ,"MPVsTECM1"     ,                300, 0, 600);
+        MonitorElement* MPVsTECM2;     // = new TH1D("MPVsTECM2"     ,"MPVsTECM2"     ,                300, 0, 600);
+
+        MonitorElement* MPVError;      // = new TH1D("MPVError"      ,"MPVError"      ,                150, 0, 150);
+        MonitorElement* MPVErrorVsMPV; // = new TH2D("MPVErrorVsMPV" ,"MPVErrorVsMPV" ,300,    0, 600, 150, 0, 150);
+        MonitorElement* MPVErrorVsEta; // = new TH2D("MPVErrorVsEta" ,"MPVErrorVsEta" , 50, -3.0, 3.0, 150, 0, 150);
+        MonitorElement* MPVErrorVsPhi; // = new TH2D("MPVErrorVsPhi" ,"MPVErrorVsPhi" , 50, -3.4, 3.4, 150, 0, 150);
+        MonitorElement* MPVErrorVsN;   // = new TH2D("MPVErrorVsN"   ,"MPVErrorVsN"   ,500,    0,1000, 150, 0, 150);
+
 
 	unsigned int NEvent;    
 	unsigned int NTrack;
@@ -252,6 +436,7 @@ private:
 	const std::vector<double>*         chargeoverpath =0;  edm::EDGetTokenT<std::vector<double>         > chargeoverpath_token_;
 	const std::vector<unsigned char>*  amplitude      =0;  edm::EDGetTokenT<std::vector<unsigned char>  > amplitude_token_;
 	const std::vector<double>*         gainused       =0;  edm::EDGetTokenT<std::vector<double>         > gainused_token_;
+        const std::vector<double>*         gainusedTick   =0;  edm::EDGetTokenT<std::vector<double>         > gainusedTick_token_;
 
 	string EventPrefix_; //("");
 	string EventSuffix_; //("");
@@ -261,6 +446,8 @@ private:
 	string CalibSuffix_; //("");
 
 private :
+        std::vector<std::pair<std::string,std::string>> chargeHistoTags(const char* tag) const;
+
 	class isEqual{
 	public:
 		template <class T> bool operator () (const T& PseudoDetId1, const T& PseudoDetId2) { return PseudoDetId1==PseudoDetId2; }
@@ -321,6 +508,7 @@ SiStripGainFromCalibTree::SiStripGainFromCalibTree(const edm::ParameterSet& iCon
 
 	CalibrationLevel        = iConfig.getUntrackedParameter<int>     ("CalibrationLevel"   ,  0);
 	VInputFiles             = iConfig.getUntrackedParameter<vector<string> >  ("InputFiles");
+        VChargeHisto            = iConfig.getUntrackedParameter<vector<string> >  ("ChargeHisto");
 
 
 	useCalibration          = iConfig.getUntrackedParameter<bool>    ("UseCalibration"     , false);
@@ -334,6 +522,8 @@ SiStripGainFromCalibTree::SiStripGainFromCalibTree(const edm::ParameterSet& iCon
 	tagCondition_GoodFrac   = iConfig.getUntrackedParameter<double>  ("GoodFracForTagProd"     , 0.95);
 
 	saveSummary             = iConfig.getUntrackedParameter<bool>    ("saveSummary"     , false);
+
+        doChargeMonitorPerPlane = iConfig.getUntrackedParameter<bool>    ("doChargeMonitorPerPlane", false);
 
 
         // Gather DQM Service
@@ -353,6 +543,10 @@ SiStripGainFromCalibTree::SiStripGainFromCalibTree(const edm::ParameterSet& iCon
 
         Charge_Vs_Index.insert( Charge_Vs_Index.begin(), dqm_tag_.size(), 0);
         //Charge_Vs_Index_Absolute.insert( Charge_Vs_Index_Absolute.begin(), dqm_tag_.size(), 0);
+        Charge_1.insert( Charge_1.begin(), dqm_tag_.size(), std::vector<MonitorElement*>() );
+        Charge_2.insert( Charge_2.begin(), dqm_tag_.size(), std::vector<MonitorElement*>() );
+        Charge_3.insert( Charge_3.begin(), dqm_tag_.size(), std::vector<MonitorElement*>() );
+        Charge_4.insert( Charge_4.begin(), dqm_tag_.size(), std::vector<MonitorElement*>() );
         Charge_Vs_PathlengthTIB.insert( Charge_Vs_PathlengthTIB.begin(), dqm_tag_.size(), 0);
         Charge_Vs_PathlengthTOB.insert( Charge_Vs_PathlengthTOB.begin(), dqm_tag_.size(), 0);
         Charge_Vs_PathlengthTIDP.insert( Charge_Vs_PathlengthTIDP.begin(), dqm_tag_.size(), 0);
@@ -387,6 +581,7 @@ SiStripGainFromCalibTree::SiStripGainFromCalibTree(const edm::ParameterSet& iCon
 	chargeoverpath_token_ = consumes<std::vector<double>         >(edm::InputTag(label, CalibPrefix_ + "chargeoverpath"+ CalibSuffix_)); 
 	amplitude_token_      = consumes<std::vector<unsigned char>  >(edm::InputTag(label, CalibPrefix_ + "amplitude"     + CalibSuffix_)); 
 	gainused_token_       = consumes<std::vector<double>         >(edm::InputTag(label, CalibPrefix_ + "gainused"      + CalibSuffix_)); 
+        gainusedTick_token_   = consumes<std::vector<double>         >(edm::InputTag(label, CalibPrefix_ + "gainusedTick"  + CalibSuffix_));
 
 	edm::ParameterSet evtinfo_pset = iConfig.getUntrackedParameter<edm::ParameterSet>("evtinfo");
 	label        = evtinfo_pset.getUntrackedParameter<string>("label");
@@ -406,6 +601,56 @@ SiStripGainFromCalibTree::SiStripGainFromCalibTree(const edm::ParameterSet& iCon
 	trackphi_token_	      = consumes<std::vector<double>      	 >(edm::InputTag(label, TrackPrefix_ + "phi"       + TrackSuffix_)); 
 	trackhitsvalid_token_ = consumes<std::vector<unsigned int>	 >(edm::InputTag(label, TrackPrefix_ + "hitsvalid" + TrackSuffix_)); 
         trackalgo_token_      = consumes<std::vector<int>                >(edm::InputTag(label, TrackPrefix_ + "algo"      + TrackSuffix_));
+}
+
+std::vector<std::pair<std::string,std::string>> 
+SiStripGainFromCalibTree::chargeHistoTags( const char* tag) const {
+
+    std::vector<std::pair<std::string,std::string>> h; 
+    std::string Tag = tag;
+    if (Tag.length())  Tag = "__" + Tag;
+
+    std::string h_tag = "";
+    std::string h_tit = "";
+
+    if (doChargeMonitorPerPlane) {
+        // Book monitoring histogram for TIB layers
+        for(unsigned int i=1;i<5;i++) {
+            h_tag = "TIB_layer_" + std::to_string(i) + Tag;
+            h_tit = h_tag; std::replace(h_tit.begin(),h_tit.end(),'_',' ');
+            h.push_back(std::pair<std::string,std::string>(h_tag,h_tit));
+        }
+        // Book monitoring histogram for TOB layers
+        for(unsigned int i=1;i<7;i++) {
+            h_tag = "TOB_layer_" + std::to_string(i) + Tag;
+            h_tit = h_tag; std::replace(h_tit.begin(),h_tit.end(),'_',' ');
+            h.push_back(std::pair<std::string,std::string>(h_tag,h_tit));
+        } 
+        // Book monitoring histogram for TID wheels
+        for(int i=-3;i<4;i++) {
+            if (i==0) continue;
+            if (i<0)  h_tag = "TIDminus_wheel_" + std::to_string(i) + Tag;
+            else      h_tag = "TIDplus_wheel_" + std::to_string(i) + Tag;
+            h_tit = h_tag; std::replace(h_tit.begin(),h_tit.end(),'_',' ');
+            h.push_back(std::pair<std::string,std::string>(h_tag,h_tit));
+        }
+        // Book monitoring histogram for TEC wheels
+        for(int i=-9;i<10;i++) {
+            if (i==0) continue;
+            if (i<0) h_tag = "TECminus_wheel_" + std::to_string(i) + Tag;
+            else     h_tag = "TECplus_wheel_" + std::to_string(i) + Tag;
+            h_tit = h_tag; std::replace(h_tit.begin(),h_tit.end(),'_',' ');
+            h.push_back(std::pair<std::string,std::string>(h_tag,h_tit));
+        } 
+    }
+
+    for(unsigned int i=0; i<VChargeHisto.size();i++) {
+        h_tag = VChargeHisto[i] + Tag;
+        h_tit = h_tag; std::replace(h_tit.begin(),h_tit.end(),'_',' ');
+        h.push_back(std::pair<std::string,std::string>(h_tag,h_tit));
+    }
+
+    return h;
 }
 
 void SiStripGainFromCalibTree::bookDQMHistos(const char* dqm_dir, const char* tag)
@@ -446,6 +691,75 @@ void SiStripGainFromCalibTree::bookDQMHistos(const char* dqm_dir, const char* ta
     Charge_Vs_PathlengthTECP2[elepos] = dbe->book2S(cvpTECP2.c_str(), cvpTECP2.c_str(), 20   , 0.3 , 1.3  , 250,0,2000);
     Charge_Vs_PathlengthTECM1[elepos] = dbe->book2S(cvpTECM1.c_str(), cvpTECM1.c_str(), 20   , 0.3 , 1.3  , 250,0,2000);
     Charge_Vs_PathlengthTECM2[elepos] = dbe->book2S(cvpTECM2.c_str(), cvpTECM2.c_str(), 20   , 0.3 , 1.3  , 250,0,2000);
+
+    //Book charge monitoring histograms
+    std::vector<std::pair<std::string,std::string>> htags = chargeHistoTags("");
+    for (unsigned int i=0;i<htags.size();i++){
+        std::string htag = (htags[i]).first + stag;
+        Charge_1[elepos].push_back( dbe->book1DD( htag.c_str(), (htags[i]).second.c_str(), 100   , 0. , 1000. ) );
+    }
+
+    htags = chargeHistoTags("woG2");
+    for (unsigned int i=0;i<htags.size();i++){
+        std::string htag = (htags[i]).first + stag;
+        Charge_2[elepos].push_back( dbe->book1DD( htag.c_str(), (htags[i]).second.c_str(), 100   , 0. , 1000. ) );
+    }
+
+    htags = chargeHistoTags("woG1");
+    for (unsigned int i=0;i<htags.size();i++){
+        std::string htag = (htags[i]).first + stag;
+        Charge_3[elepos].push_back( dbe->book1DD( htag.c_str(), (htags[i]).second.c_str(), 100   , 0. , 1000. ) );
+    }
+
+    htags = chargeHistoTags("woG1G2");
+    for (unsigned int i=0;i<htags.size();i++){
+        std::string htag = (htags[i]).first + stag;
+        Charge_4[elepos].push_back( dbe->book1DD( htag.c_str(), (htags[i]).second.c_str(), 100   , 0. , 1000. ) );
+    }
+
+    //Book validation histograms
+    if (m_harvestingMode) {
+        MPV_Vs_EtaTIB  = dbe->book2DD("MPV_Vs_EtaTIB" ,"MPV_Vs_EtaTIB" , 50, -3.0, 3.0, 300, 0, 600);
+        MPV_Vs_EtaTID  = dbe->book2DD("MPV_Vs_EtaTID" ,"MPV_Vs_EtaTID" , 50, -3.0, 3.0, 300, 0, 600);
+        MPV_Vs_EtaTOB  = dbe->book2DD("MPV_Vs_EtaTOB" ,"MPV_Vs_EtaTOB" , 50, -3.0, 3.0, 300, 0, 600);
+        MPV_Vs_EtaTEC  = dbe->book2DD("MPV_Vs_EtaTEC" ,"MPV_Vs_EtaTEC" , 50, -3.0, 3.0, 300, 0, 600);
+        MPV_Vs_EtaTEC1 = dbe->book2DD("MPV_Vs_EtaTEC1","MPV_Vs_EtaTEC1", 50, -3.0, 3.0, 300, 0, 600);
+        MPV_Vs_EtaTEC2 = dbe->book2DD("MPV_Vs_EtaTEC2","MPV_Vs_EtaTEC2", 50, -3.0, 3.0, 300, 0, 600);
+
+        MPV_Vs_PhiTIB  = dbe->book2DD("MPV_Vs_PhiTIB" ,"MPV_Vs_PhiTIB" , 50, -3.4, 3.4, 300, 0, 600);
+        MPV_Vs_PhiTID  = dbe->book2DD("MPV_Vs_PhiTID" ,"MPV_Vs_PhiTID" , 50, -3.4, 3.4, 300, 0, 600);
+        MPV_Vs_PhiTOB  = dbe->book2DD("MPV_Vs_PhiTOB" ,"MPV_Vs_PhiTOB" , 50, -3.4, 3.4, 300, 0, 600);
+        MPV_Vs_PhiTEC  = dbe->book2DD("MPV_Vs_PhiTEC" ,"MPV_Vs_PhiTEC" , 50, -3.4, 3.4, 300, 0, 600);
+        MPV_Vs_PhiTEC1 = dbe->book2DD("MPV_Vs_PhiTEC1","MPV_Vs_PhiTEC1", 50, -3.4, 3.4, 300, 0, 600);
+        MPV_Vs_PhiTEC2 = dbe->book2DD("MPV_Vs_PhiTEC2","MPV_Vs_PhiTEC2", 50, -3.4, 3.4, 300, 0, 600);
+
+        NoMPV          = dbe->book2DD("NoMPV"         ,"NoMPV"         ,350, -350, 350, 240, 0, 120);
+
+        Gains          = dbe->book1DD("Gains"         ,"Gains"         ,                300, 0, 2);
+        MPVs           = dbe->book1DD("MPVs"          ,"MPVs"          ,                300, 0, 600);
+        MPVs320        = dbe->book1DD("MPVs320"       ,"MPVs320"       ,                300, 0, 600);
+        MPVs500        = dbe->book1DD("MPVs500"       ,"MPVs500"       ,                300, 0, 600);
+        MPVsTIB        = dbe->book1DD("MPVsTIB"       ,"MPVsTIB"       ,                300, 0, 600);
+        MPVsTID        = dbe->book1DD("MPVsTID"       ,"MPVsTID"       ,                300, 0, 600);
+        MPVsTIDP       = dbe->book1DD("MPVsTIDP"      ,"MPVsTIDP"      ,                300, 0, 600);
+        MPVsTIDM       = dbe->book1DD("MPVsTIDM"      ,"MPVsTIDM"      ,                300, 0, 600);
+        MPVsTOB        = dbe->book1DD("MPVsTOB"       ,"MPVsTOB"       ,                300, 0, 600);
+        MPVsTEC        = dbe->book1DD("MPVsTEC"       ,"MPVsTEC"       ,                300, 0, 600);
+        MPVsTECP       = dbe->book1DD("MPVsTECP"      ,"MPVsTECP"      ,                300, 0, 600);
+        MPVsTECM       = dbe->book1DD("MPVsTECM"      ,"MPVsTECM"      ,                300, 0, 600);
+        MPVsTEC1       = dbe->book1DD("MPVsTEC1"      ,"MPVsTEC1"      ,                300, 0, 600);
+        MPVsTEC2       = dbe->book1DD("MPVsTEC2"      ,"MPVsTEC2"      ,                300, 0, 600);
+        MPVsTECP1      = dbe->book1DD("MPVsTECP1"     ,"MPVsTECP1"     ,                300, 0, 600);
+        MPVsTECP2      = dbe->book1DD("MPVsTECP2"     ,"MPVsTECP2"     ,                300, 0, 600);
+        MPVsTECM1      = dbe->book1DD("MPVsTECM1"     ,"MPVsTECM1"     ,                300, 0, 600);
+        MPVsTECM2      = dbe->book1DD("MPVsTECM2"     ,"MPVsTECM2"     ,                300, 0, 600);
+
+        MPVError       = dbe->book1DD("MPVError"      ,"MPVError"      ,                150, 0, 150);
+        MPVErrorVsMPV  = dbe->book2DD("MPVErrorVsMPV" ,"MPVErrorVsMPV" ,300,    0, 600, 150, 0, 150);
+        MPVErrorVsEta  = dbe->book2DD("MPVErrorVsEta" ,"MPVErrorVsEta" , 50, -3.0, 3.0, 150, 0, 150);
+        MPVErrorVsPhi  = dbe->book2DD("MPVErrorVsPhi" ,"MPVErrorVsPhi" , 50, -3.4, 3.4, 150, 0, 150);
+        MPVErrorVsN    = dbe->book2DD("MPVErrorVsN"   ,"MPVErrorVsN"   ,500,    0,1000, 150, 0, 150);
+    }
 }
 
 void SiStripGainFromCalibTree::algoBeginJob(const edm::EventSetup& iSetup)
@@ -552,7 +866,6 @@ void SiStripGainFromCalibTree::algoBeginJob(const edm::EventSetup& iSetup)
 					APV->FitChi2       = -1;
 					APV->Gain          = -1;
 					APV->PreviousGain  = 1;
-					APV->PreviousGainTick = 1;
 					APV->x             = DetUnit->position().basicVector().x();
 					APV->y             = DetUnit->position().basicVector().y();
 					APV->z             = DetUnit->position().basicVector().z();
@@ -624,31 +937,25 @@ void SiStripGainFromCalibTree::algoBeginRun(const edm::Run& run, const edm::Even
 	iSetup.get<SiStripQualityRcd>().get(SiStripQuality_);
 
 	for(unsigned int a=0;a<APVsCollOrdered.size();a++){
+		stAPVGain* APV = APVsCollOrdered[a];
 
-	  stAPVGain* APV = APVsCollOrdered[a];
+		APV->isMasked      = SiStripQuality_->IsApvBad(APV->DetId,APV->APVId);
+//      if(!FirstSetOfConstants){
+		if(gainHandle->getNumberOfTags()!=2){edm::LogError("SiStripGainFromCalibTree")<< "NUMBER OF GAIN TAG IS EXPECTED TO BE 2\n";fflush(stdout);exit(0);};		   
+		float newPreviousGain = gainHandle->getApvGain(APV->APVId,gainHandle->getRange(APV->DetId, 1),1);
+		if(APV->PreviousGain!=1 and newPreviousGain!=APV->PreviousGain)edm::LogWarning("SiStripGainFromCalibTree")<< "WARNING: ParticleGain in the global tag changed\n";
+		APV->PreviousGain = newPreviousGain;
 
-	  // MM. 03/03/2017 all of this makes sense only for SiStrip (i.e. get me out of here if I am on a pixel ROC)
-	  if(APV->SubDet==PixelSubdetector::PixelBarrel || APV->SubDet==PixelSubdetector::PixelEndcap) continue;
+		float newPreviousGainTick = gainHandle->getApvGain(APV->APVId,gainHandle->getRange(APV->DetId, 0),1);
+		if(APV->PreviousGainTick!=1 and newPreviousGainTick!=APV->PreviousGainTick)edm::LogWarning("SiStripGainFromCalibTree")<< "WARNING: TickMarkGain in the global tag changed\n";
+		APV->PreviousGainTick = newPreviousGainTick;
 
-	  APV->isMasked      = SiStripQuality_->IsApvBad(APV->DetId,APV->APVId);
-	  //      if(!FirstSetOfConstants){
-	  
-	  if(gainHandle->getNumberOfTags()!=2){edm::LogError("SiStripGainFromCalibTree")<< "NUMBER OF GAIN TAG IS EXPECTED TO BE 2\n";fflush(stdout);exit(0);};		   
-	  float newPreviousGain = gainHandle->getApvGain(APV->APVId,gainHandle->getRange(APV->DetId, 1),1);
-	  if(APV->PreviousGain!=1 and newPreviousGain!=APV->PreviousGain)edm::LogWarning("SiStripGainFromCalibTree")<< "WARNING: ParticleGain in the global tag changed\n";
-	  APV->PreviousGain = newPreviousGain;
-	  
-	  float newPreviousGainTick = gainHandle->getApvGain(APV->APVId,gainHandle->getRange(APV->DetId, 0),0);
-	  if(APV->PreviousGainTick!=1 and newPreviousGainTick!=APV->PreviousGainTick){
-	    edm::LogWarning("SiStripGainFromCalibTree")<< "WARNING: TickMarkGain in the global tag changed\n"<< std::endl
-						       <<" APV->SubDet: "<< APV->SubDet << " APV->APVId:" << APV->APVId << std::endl
-						       <<" APV->PreviousGainTick: "<<APV->PreviousGainTick<<" newPreviousGainTick: "<<newPreviousGainTick<<std::endl;
-	  }
-	  APV->PreviousGainTick = newPreviousGainTick;
-	  
-	  //printf("DETID = %7i APVID=%1i Previous Gain=%8.4f (G1) x %8.4f (G2)\n",APV->DetId,APV->APVId,APV->PreviousGainTick, APV->PreviousGain); 
-	  //      }
-	  
+
+		//printf("DETID = %7i APVID=%1i Previous Gain=%8.4f (G1) x %8.4f (G2)\n",APV->DetId,APV->APVId,APV->PreviousGainTick, APV->PreviousGain);
+         
+         
+
+//      }
 	}
 }
 
@@ -754,6 +1061,51 @@ void SiStripGainFromCalibTree::algoEndRun(const edm::Run& run, const edm::EventS
                     edm::LogError("SiStripGainFromCalibTree") << "Harvesting: could not retrieve " << cvpTECM2.c_str()
                                                               << ", statistics will not be summed!" << std::endl;
                 } else (Charge_Vs_PathlengthTECM2[Harvest])->getTH2S()->Add((Charge_Vs_PathlengthTECM2[elepos])->getTH2S());
+
+                // Gather Charge monitoring histograms 
+                Charge_1[elepos].clear();
+                std::vector<std::pair<std::string,std::string>> tags = chargeHistoTags("");
+                for (unsigned int i=0;i<tags.size();i++){
+                    std::string tag = DQM_dir + "/" + (tags[i]).first + stag;
+                    Charge_1[elepos].push_back( dbe->get( tag.c_str() ) );
+                    if (Charge_1[elepos][i]==0) {
+                         edm::LogError("SiStripGainFromCalibTree") << "Harvesting: could not retrieve " << tag.c_str()
+                                                                   << ", statistics will not be summed!" << std::endl;
+                    } else (Charge_1[Harvest][i])->getTH1D()->Add((Charge_1[elepos][i])->getTH1D());
+                }
+
+                tags = chargeHistoTags("woG2");
+                for (unsigned int i=0;i<tags.size();i++){
+                    std::string tag = DQM_dir + "/" + (tags[i]).first + stag;
+                    Charge_2[elepos].push_back( dbe->get( tag.c_str() ) );
+                    if (Charge_2[elepos][i]==0) {
+                         edm::LogError("SiStripGainFromCalibTree") << "Harvesting: could not retrieve " << tag.c_str()
+                                                                   << ", statistics will not be summed!" << std::endl;
+                    } else (Charge_2[Harvest][i])->getTH1D()->Add((Charge_2[elepos][i])->getTH1D());
+
+                }
+
+                tags = chargeHistoTags("woG1");
+                for (unsigned int i=0;i<tags.size();i++){
+                    std::string tag = DQM_dir + "/" + (tags[i]).first + stag;
+                    Charge_3[elepos].push_back( dbe->get( tag.c_str() ) );
+                    if (Charge_3[elepos][i]==0) {
+                         edm::LogError("SiStripGainFromCalibTree") << "Harvesting: could not retrieve " << tag.c_str()
+                                                                   << ", statistics will not be summed!" << std::endl;
+                    } else (Charge_3[Harvest][i])->getTH1D()->Add((Charge_3[elepos][i])->getTH1D());
+
+                }
+
+                tags = chargeHistoTags("woG1G2");
+                for (unsigned int i=0;i<tags.size();i++){
+                    std::string tag = DQM_dir + "/" + (tags[i]).first + stag;
+                    Charge_4[elepos].push_back( dbe->get( tag.c_str() ) );
+                    if (Charge_4[elepos][i]==0) {
+                         edm::LogError("SiStripGainFromCalibTree") << "Harvesting: could not retrieve " << tag.c_str()
+                                                                   << ", statistics will not be summed!" << std::endl;
+                    } else (Charge_4[Harvest][i])->getTH1D()->Add((Charge_4[elepos][i])->getTH1D());
+                }
+
             }
 	}
 }
@@ -773,6 +1125,9 @@ SiStripGainFromCalibTree::algoEndJob() {
 
 	// Now that we have the full statistics we can extract the information of the 2D histograms
 	algoComputeMPVandGain();
+
+        // Result monitoring
+        qualityMonitor();
 
         // Force the DB object writing,
         // thus setting the IOV as the first processed run (if timeFromEndRun is set to false)
@@ -920,22 +1275,77 @@ void SiStripGainFromCalibTree::processEvent() {
 		//(Charge_Vs_Index_Absolute[elepos])->Fill(APV->Index,Charge);   
 		(Charge_Vs_Index[elepos])         ->Fill(APV->Index,ClusterChargeOverPath);
 
-		if(APV->SubDet==StripSubdetector::TIB){ (Charge_Vs_PathlengthTIB[elepos])  ->Fill((*path)[i],Charge); 
-		}else if(APV->SubDet==StripSubdetector::TOB){ (Charge_Vs_PathlengthTOB[elepos])  ->Fill((*path)[i],Charge);
+
+
+                // Compute the charge for monitoring and fill the relative histograms
+                int mCharge1 = 0;
+                int mCharge2 = 0;
+                int mCharge3 = 0;
+                int mCharge4 = 0;
+                if(APV->SubDet>2) {
+                    for(unsigned int s=0;s<(*nstrips)[i];s++){
+                        int StripCharge =  (*amplitude)[FirstAmplitude-(*nstrips)[i]+s];
+                        if(StripCharge>1024)      StripCharge = 255;
+                        else if(StripCharge>254)  StripCharge = 254;
+                        mCharge1 += StripCharge;
+
+                        StripCharge =  (*amplitude)[FirstAmplitude-(*nstrips)[i]+s];
+                        if(StripCharge>1024)      StripCharge = 255;
+                        else if(StripCharge>254)  StripCharge = 254;
+                        mCharge2 += StripCharge;
+
+                        StripCharge =  (*amplitude)[FirstAmplitude-(*nstrips)[i]+s];
+                        if(StripCharge>1024)      StripCharge = 255;
+                        else if(StripCharge>254)  StripCharge = 254;
+                        mCharge3 += StripCharge;
+
+                        StripCharge =  (*amplitude)[FirstAmplitude-(*nstrips)[i]+s];
+                        if(StripCharge>1024)      StripCharge = 255;
+                        else if(StripCharge>254)  StripCharge = 254;
+                        mCharge4 += StripCharge;
+                    }
+                    // Revome gains for monitoring
+                    mCharge2 *= (*gainused)[i];                         // remove G2
+                    mCharge3 *= (*gainusedTick)[i];                     // remove G1
+                    mCharge4 *= ( (*gainused)[i] * (*gainusedTick)[i]); // remove G1 and G2
+                }
+                std::vector<MonitorElement*>& v1 = Charge_1[elepos];
+                std::vector<MonitorElement*> cmon1 = FetchMonitor(v1, (*rawid)[i]);
+                for(unsigned int m=0; m<cmon1.size(); m++) cmon1[m]->Fill(( (double) mCharge1 )/(*path)[i]);
+
+                std::vector<MonitorElement*>& v2 = Charge_2[elepos];
+                std::vector<MonitorElement*> cmon2 = FetchMonitor(v2, (*rawid)[i]);
+                for(unsigned int m=0; m<cmon2.size(); m++) cmon2[m]->Fill(( (double) mCharge2 )/(*path)[i]);
+
+                std::vector<MonitorElement*>& v3 = Charge_3[elepos];
+                std::vector<MonitorElement*> cmon3 = FetchMonitor(v3, (*rawid)[i]);
+                for(unsigned int m=0; m<cmon3.size(); m++) cmon3[m]->Fill(( (double) mCharge3 )/(*path)[i]);
+
+                std::vector<MonitorElement*>& v4 = Charge_4[elepos];
+                std::vector<MonitorElement*> cmon4 = FetchMonitor(v4, (*rawid)[i]);
+                for(unsigned int m=0; m<cmon4.size(); m++) cmon4[m]->Fill(( (double) mCharge4 )/(*path)[i]);
+
+
+
+                // Fill Charge Vs pathLenght histograms
+		if(APV->SubDet==StripSubdetector::TIB){ 
+                    (Charge_Vs_PathlengthTIB[elepos])->Fill((*path)[i],Charge);  // TIB
+
+		}else if(APV->SubDet==StripSubdetector::TOB){ 
+                    (Charge_Vs_PathlengthTOB[elepos])->Fill((*path)[i],Charge);  // TOB
+
 		}else if(APV->SubDet==StripSubdetector::TID){
-			if(APV->Eta<0){			  (Charge_Vs_PathlengthTIDM[elepos]) ->Fill((*path)[i],Charge);
-			}else if(APV->Eta>0){                      (Charge_Vs_PathlengthTIDP[elepos]) ->Fill((*path)[i],Charge);
-			}
+                    if(APV->Eta<0)     { (Charge_Vs_PathlengthTIDM[elepos])->Fill((*path)[i],Charge); }  // TID minus
+                    else if(APV->Eta>0){ (Charge_Vs_PathlengthTIDP[elepos])->Fill((*path)[i],Charge); }  // TID plus
+
 		}else if(APV->SubDet==StripSubdetector::TEC){
-			if(APV->Eta<0){
-				if(APV->Thickness<0.04){          (Charge_Vs_PathlengthTECM1[elepos])->Fill((*path)[i],Charge);
-				}else if(APV->Thickness>0.04){          (Charge_Vs_PathlengthTECM2[elepos])->Fill((*path)[i],Charge);
-				}
-			}else if(APV->Eta>0){
-				if(APV->Thickness<0.04){          (Charge_Vs_PathlengthTECP1[elepos])->Fill((*path)[i],Charge);
-				}else if(APV->Thickness>0.04){          (Charge_Vs_PathlengthTECP2[elepos])->Fill((*path)[i],Charge);
-				}
-			}
+	            if(APV->Eta<0){
+                        if(APV->Thickness<0.04)     { (Charge_Vs_PathlengthTECM1[elepos])->Fill((*path)[i],Charge); } // TEC minus, type 1
+                        else if(APV->Thickness>0.04){ (Charge_Vs_PathlengthTECM2[elepos])->Fill((*path)[i],Charge); } // TEC minus, type 2
+                    } else if(APV->Eta>0){
+                        if(APV->Thickness<0.04)     { (Charge_Vs_PathlengthTECP1[elepos])->Fill((*path)[i],Charge); } // TEC plus, type 1
+                        else if(APV->Thickness>0.04){ (Charge_Vs_PathlengthTECP2[elepos])->Fill((*path)[i],Charge); } // TEC plus, type 2
+                    }
 		}
 
 	}// END OF ON-CLUSTER LOOP
@@ -1072,6 +1482,80 @@ void SiStripGainFromCalibTree::algoComputeMPVandGain() {
 	}printf("\n");
 }
 
+
+void SiStripGainFromCalibTree::qualityMonitor() {
+
+    for(unsigned int a=0;a<APVsCollOrdered.size();a++) {
+        stAPVGain* APV = APVsCollOrdered[a];
+        if(APV==NULL)continue;
+
+        unsigned int  SubDet    = APV->SubDet;
+        float         z         = APV->z;
+        float         Eta       = APV->Eta;
+        float         R         = APV->R;
+        float         Phi       = APV->Phi;
+        float         Thickness = APV->Thickness;
+        double        FitMPV    = APV->FitMPV;
+        double        FitMPVErr = APV->FitMPVErr;
+        double        Gain      = APV->Gain;
+        double        NEntries  = APV->NEntries;
+
+        //tree_Index        = APV->Index;
+        //tree_x            = APV->x;
+        //tree_y            = APV->y;
+        //tree_Bin          = (Charge_Vs_Index[elepos])->getTH2S()->GetXaxis()->FindBin(APV->Index);
+        //tree_DetId        = APV->DetId;
+        //tree_APVId        = APV->APVId;
+        //tree_FitWidth     = APV->FitWidth;
+        //tree_FitWidthErr  = APV->FitWidthErr;
+        //tree_FitChi2NDF   = APV->FitChi2;
+        //tree_FitNorm      = APV->FitNorm;
+        //tree_PrevGain     = APV->PreviousGain;
+        //tree_PrevGainTick = APV->PreviousGainTick;
+        //tree_isMasked     = APV->isMasked;
+
+        if(SubDet>=3 && FitMPV<0.) NoMPV->Fill(z,R);
+        if(SubDet>=3 && FitMPV>=0.) {
+            if(SubDet==3) MPV_Vs_EtaTIB->Fill(Eta,FitMPV);
+            if(SubDet==4) MPV_Vs_EtaTID->Fill(Eta,FitMPV);
+            if(SubDet==5) MPV_Vs_EtaTOB->Fill(Eta,FitMPV);
+            if(SubDet==6) MPV_Vs_EtaTEC->Fill(Eta,FitMPV);
+            if(SubDet==6 && Thickness<0.04) MPV_Vs_EtaTEC1->Fill(Eta,FitMPV);
+            if(SubDet==6 && Thickness>0.04) MPV_Vs_EtaTEC1->Fill(Eta,FitMPV);
+            if(SubDet==3) MPV_Vs_PhiTIB->Fill(Phi,FitMPV);
+            if(SubDet==4) MPV_Vs_PhiTID->Fill(Phi,FitMPV);
+            if(SubDet==5) MPV_Vs_PhiTOB->Fill(Phi,FitMPV);
+            if(SubDet==6) MPV_Vs_PhiTEC->Fill(Phi,FitMPV);
+            if(SubDet==6 && Thickness<0.04) MPV_Vs_PhiTEC1->Fill(Phi,FitMPV);
+            if(SubDet==6 && Thickness>0.04) MPV_Vs_PhiTEC1->Fill(Phi,FitMPV);
+
+            if(FitMPV>0.) Gains->Fill(Gain);
+            MPVs->Fill(FitMPV);
+            if(Thickness<0.04) MPVs320->Fill(Phi,FitMPV);
+            if(Thickness>0.04) MPVs500->Fill(Phi,FitMPV);
+            if(SubDet==3) MPVsTIB->Fill(FitMPV);
+            if(SubDet==4) MPVsTID->Fill(FitMPV);
+            if(SubDet==4 && Eta<0.) MPVsTIDM->Fill(FitMPV);
+            if(SubDet==4 && Eta>0.) MPVsTIDP->Fill(FitMPV);
+            if(SubDet==5) MPVsTOB->Fill(FitMPV);
+            if(SubDet==6) MPVsTEC->Fill(FitMPV);
+            if(SubDet==6 && Eta<0.) MPVsTECM->Fill(FitMPV);
+            if(SubDet==6 && Eta>0.) MPVsTECP->Fill(FitMPV);
+            if(SubDet==6 && Thickness<0.04) MPVsTEC1->Fill(FitMPV);
+            if(SubDet==6 && Thickness>0.04) MPVsTEC2->Fill(FitMPV);
+            if(SubDet==6 && Thickness<0.04 && Eta>0.) MPVsTECP1->Fill(FitMPV);
+            if(SubDet==6 && Thickness>0.04 && Eta>0.) MPVsTECP2->Fill(FitMPV);
+            if(SubDet==6 && Thickness<0.04 && Eta<0.) MPVsTECM1->Fill(FitMPV);
+            if(SubDet==6 && Thickness>0.04 && Eta<0.) MPVsTECM2->Fill(FitMPV);
+
+            MPVError->Fill(FitMPVErr);
+            MPVErrorVsMPV->Fill(FitMPV,FitMPVErr);
+            MPVErrorVsEta->Fill(Eta,FitMPVErr);
+            MPVErrorVsPhi->Fill(Phi,FitMPVErr);
+            MPVErrorVsN->Fill(NEntries,FitMPVErr);
+        }
+    }
+}
 
 void SiStripGainFromCalibTree::storeOnTree(TFileService* tfs)
 {
@@ -1313,8 +1797,9 @@ SiStripGainFromCalibTree::algoAnalyze(const edm::Event& iEvent, const edm::Event
 	auto handle22 = connect(chargeoverpath, chargeoverpath_token_, iEvent);
 	auto handle23 = connect(amplitude     , amplitude_token_     , iEvent);
 	auto handle24 = connect(gainused      , gainused_token_      , iEvent);
+        auto handle25 = connect(gainusedTick  , gainusedTick_token_  , iEvent);
 
-        auto handle25 = connect(trackalgo     , trackalgo_token_     , iEvent);
+        auto handle26 = connect(trackalgo     , trackalgo_token_     , iEvent);
      
 	processEvent();
 }

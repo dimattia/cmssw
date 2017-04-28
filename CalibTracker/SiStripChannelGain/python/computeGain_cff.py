@@ -14,6 +14,7 @@ SiStripCalib = cms.EDAnalyzer(
     harvestingMode      = cms.untracked.bool(False),
     calibrationMode     = cms.untracked.string('StdBunch'),
     DQMdir              = cms.untracked.string('AlCaReco/SiStripGains'),
+    ChargeHisto         = cms.untracked.vstring('TIB','TIB_layer1','TOB','TOB_layer1','TIDminus','TIDplus','TECminus','TECplus'),
 
     Validation          = cms.untracked.bool(False),
     OldGainRemoving     = cms.untracked.bool(False),
@@ -38,6 +39,7 @@ SiStripCalib = cms.EDAnalyzer(
     IOVMode                 = cms.string('AlgoDriven'),
     Record                  = cms.string('SiStripApvGainRcd'),
     doStoreOnDB             = cms.bool(True),
+    doChargeMonitorPerPlane = cms.untracked.bool(False),
 
     treePath            = cms.untracked.string('gainCalibrationTree/tree'),
     gain                = cms.untracked.PSet(label = cms.untracked.string('shallowGainCalibration'), prefix = cms.untracked.string("GainCalibration"), suffix = cms.untracked.string('')),
